@@ -1,21 +1,7 @@
 import { useState } from "react";
 import { useCookies } from "react-cookie";
 
-function register() {
-  fetch("http://localhost:8080/register", {
-    credentials: "include",
-  })
-    .then((response) => {
-      return response.json();
-    })
-    .then((response) => {
-      if (response["status"] === 1) {
-        alert(response["message"]);
-      } else {
-        console.log(response);
-      }
-    });
-}
+import DefaultNavigation from "./DefaultNavigation.jsx";
 
 function App() {
   const [shortURL, setShortURL] = useState("");
@@ -54,32 +40,7 @@ function App() {
 
   return (
     <div name="page" className="flex h-[100vh] flex-col">
-      <div
-        name="navigation"
-        className="sticky flex h-fit flex-row-reverse gap-1 bg-[#6B6F80]"
-      >
-        {cookies.auth ? (
-          <button
-            className="bg-blue-300 p-2 text-3xl"
-            onClick={() => removeCookie("auth")}
-          >
-            Log out
-          </button>
-        ) : (
-          <>
-            <button
-              name="log-in"
-              className="bg-blue-300 p-2 text-3xl"
-              onClick={register}
-            >
-              Log in
-            </button>
-            <button name="sign-up" className="bg-blue-300 p-2 text-3xl">
-              Sign up
-            </button>
-          </>
-        )}
-      </div>
+      <DefaultNavigation />
       <div
         name="toolbar"
         className="flex h-full w-full items-center justify-center"
