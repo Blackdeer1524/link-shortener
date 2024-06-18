@@ -25,10 +25,10 @@ RUN protoc --go_out=. --go_opt=paths=source_relative \
 
 ENV CGO_ENABLED=0
 ENV GOCACHE=/root/.cache/go-build 
-RUN --mount=type=cache,target=/root/.cache/go-build go build -v -o blackbox ./cmd/blackbox/blackbox.go 
+RUN --mount=type=cache,target=/root/.cache/go-build go build -v -o /usr/local/bin/blackbox ./cmd/blackbox/blackbox.go 
 
 FROM alpine:3.14 as runner
-COPY --from=build /usr/src/app/blackbox /usr/local/bin/blackbox
+COPY --from=build /usr/local/bin/blackbox /usr/local/bin/blackbox
 EXPOSE 8080
 
 ENTRYPOINT ["blackbox"]
