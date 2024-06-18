@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"shortener-server/pkg/middleware"
-	"shortener-server/pkg/response"
+	"shortener/pkg/middleware"
+	"shortener/pkg/response"
 )
 
 type shortenReq struct {

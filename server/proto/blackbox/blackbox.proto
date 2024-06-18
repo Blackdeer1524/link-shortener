@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package blackbox;
+
+option go_package = "shortener/proto/blackbox";
+
+message IssueTokenReq {
+  string user_id = 1;
+}
+
+message IssueTokenRsp {
+  string token = 1;
+}
+
+message ValidateTokenReq {
+  string token = 1;
+}
+
+message ValidateTokenRsp {
+  bool token = 1;
+}
+
+service BlackboxService {
+  rpc IssueToken(IssueTokenReq) returns (IssueTokenRsp);
+
+  rpc ValidateToken(ValidateTokenReq) returns (ValidateTokenRsp);
+}

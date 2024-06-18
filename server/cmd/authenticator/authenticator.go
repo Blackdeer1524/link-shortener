@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"shortener-server/pkg/middleware"
-	"shortener-server/pkg/models"
-	"shortener-server/pkg/response"
+	"shortener/pkg/middleware"
+	"shortener/pkg/models"
+	"shortener/pkg/response"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/golang-jwt/jwt/v5"
@@ -165,7 +165,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   3600,
 		Secure:   true,
 		HttpOnly: false,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	}
 
 	jwtCookie := http.Cookie{
@@ -285,7 +285,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   3600,
 		Secure:   true,
 		HttpOnly: false,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 	}
 
 	jwtCookie := http.Cookie{
@@ -325,8 +325,7 @@ func main() {
 	http.HandleFunc(
 		"OPTIONS /",
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().
-				Add("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().Add("Access-Control-Allow-Origin", "http://localhost:5173")
 			w.Header().Add("Access-Control-Allow-Credentials", "true")
 			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
 		}),
