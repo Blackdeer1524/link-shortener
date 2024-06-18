@@ -97,11 +97,13 @@ func (s *BlackboxServiceImpl) ValidateToken(
 		jwt.WithValidMethods([]string{"HS256"}),
 	)
 	if err != nil {
+		// TODO: remove this log
+		log.Println("invalid token. reason: ", err)
 		return nil, err
 	}
 
 	res := &blackbox.ValidateTokenRsp{
-		Token: true,
+		IsValid: true,
 	}
 	return res, nil
 }
