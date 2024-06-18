@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useCookies } from "react-cookie";
 
 import DefaultNavigation from "./DefaultNavigation.jsx";
+import AuthNavigation from "./AuthNavigation.jsx";
 
 function App() {
   const [shortURL, setShortURL] = useState("");
@@ -10,7 +11,6 @@ function App() {
   const [makingRequest, setMakingRequest] = useState(false);
 
   const [cookies, _, removeCookie] = useCookies(["auth"]);
-  console.log(cookies);
 
   const handleSubmit = () => {
     if (makingRequest) {
@@ -39,22 +39,32 @@ function App() {
       });
   };
 
+  const navBar = cookies.auth ? (
+    <AuthNavigation
+      removeAuthCookie={() => {
+        removeCookie("auth");
+      }}
+    />
+  ) : (
+    <DefaultNavigation />
+  );
+
   return (
     <div name="page" className="flex h-[100vh] flex-col">
-      <DefaultNavigation />
+      {navBar}
       <div
         name="toolbar"
         className="flex h-full w-full items-center justify-center"
       >
         <div
           name="shortener-box"
-          className="flex min-h-[40%] w-[80%] flex-col items-center gap-5 rounded-xl bg-gray-300 p-10"
+          className="flex min-h-[40%] w-[80%] flex-col items-center gap-5 rounded-xl bg-[#6B6F80] p-10"
         >
-          <label className="text-xl">URL to shorten</label>
           <input
             type="url"
             id="long-url-input"
             className="w-full rounded p-1 text-xl"
+            placeholder="Url to shorten"
             onChange={(e) => {
               setLongURL(e.target.value);
             }}

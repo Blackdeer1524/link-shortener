@@ -55,7 +55,7 @@ func NewApp(opts ...AppOption) (*App, error) {
 
 type RegisterRequest struct {
 	Name            string `json:"name"             validate:"required,gt=0,lt=300"`
-	Email           string `json:"login"            validate:"required,email"`
+	Email           string `json:"email"            validate:"required,email"`
 	Password        string `json:"password"         validate:"required,gte=8,lt=64"`
 	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=Password"`
 }
@@ -183,6 +183,8 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Write(pkg)
+	
+	log.Printf("successfully registered user `%s` from %s\n", regReq.Email, r.RemoteAddr)
 }
 
 func main() {
@@ -191,6 +193,16 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	http.HandleFunc(
+		"OPTIONS /",
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().
+				Add("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().Add("Access-Control-Allow-Credentials", "true")
+			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
+		}),
+	)
 
 	http.HandleFunc(
 		"POST /register",

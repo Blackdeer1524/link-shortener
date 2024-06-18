@@ -1,5 +1,3 @@
-import { useCookies } from "react-cookie";
-
 export default function Test() {
   return (
     <div>

@@ -1,21 +1,5 @@
 import { useNavigate } from "react-router-dom";
 
-function register() {
-  fetch("http://localhost:8080/register", {
-    credentials: "include",
-  })
-    .then((response) => {
-      return response.json();
-    })
-    .then((response) => {
-      if (response["status"] === 1) {
-        alert(response["message"]);
-      } else {
-        console.log(response);
-      }
-    });
-}
-
 export default function DefaultNavigation() {
   const navigate = useNavigate();
 
@@ -23,7 +7,7 @@ export default function DefaultNavigation() {
     <div name="navigation" className="flex h-fit bg-[#6B6F80]">
       <div className="flex flex-grow gap-1">
         <button
-          name="log-in"
+          name="home"
           className="bg-blue-300 p-2 text-3xl"
           onClick={() => navigate("/")}
         >

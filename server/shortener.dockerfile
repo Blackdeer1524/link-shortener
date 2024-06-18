@@ -1,4 +1,4 @@
-FROM golang:1.22 as build
+FROM golang:1.22 as builder
 
 WORKDIR /usr/src/app
 
@@ -8,8 +8,8 @@ RUN go mod download && go mod verify
 COPY ./cmd/shortener/shortener.go ./cmd/shortener/shortener.go
 COPY ./pkg/ ./pkg/
 
-RUN go build -v -o /usr/local/bin/shortener ./cmd/shortener/shortener.go
+ENV GOCACHE=/root/.cache/go-build
+RUN --mount=type=cache,target=/go/pkg/mod/ go build -v -o shortener ./cmd/shortener/shortener.go 
 
 EXPOSE 8080
-
-CMD ["shortener"]
+ENTRYPOINT ["./shortener"]

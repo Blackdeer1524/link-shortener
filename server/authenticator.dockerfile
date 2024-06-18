@@ -1,4 +1,4 @@
-FROM golang:1.22 as build
+FROM golang:1.22 as builder
 
 WORKDIR /usr/src/app
 
@@ -8,8 +8,8 @@ RUN go mod download && go mod verify
 COPY ./cmd/authenticator/authenticator.go ./cmd/authenticator/authenticator.go
 COPY ./pkg/ ./pkg/
 
-RUN go build -v -o /usr/local/bin/authenticator ./cmd/authenticator/authenticator.go
+ENV GOCACHE=/root/.cache/go-build
+RUN --mount=type=cache,target=/go/pkg/mod/ go build -v -o authenticator ./cmd/authenticator/authenticator.go 
 
 EXPOSE 8080
-
-CMD ["authenticator"]
+ENTRYPOINT ["./authenticator"]
