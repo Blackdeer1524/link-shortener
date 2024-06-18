@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"shortener-server/pkg/middleware"
@@ -14,23 +13,22 @@ type shortenReq struct {
 }
 
 func shortenAuthUrl(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("JWT")
-	if err != nil {
-		switch {
-		case errors.Is(err, http.ErrNoCookie):
-			http.Error(w, "cookie not found", http.StatusBadRequest)
-		default:
-			log.Println(err)
-			http.Error(w, "server error", http.StatusInternalServerError)
-		}
-		return
-	}
-	log.Println("got cookie: ", cookie.Value)
+	// cookie, err := r.Cookie("JWT")
+	// if err != nil {
+	// 	switch {
+	// 	case errors.Is(err, http.ErrNoCookie):
+	// 		http.Error(w, "cookie not found", http.StatusBadRequest)
+	// 	default:
+	// 		log.Println(err)
+	// 		http.Error(w, "server error", http.StatusInternalServerError)
+	// 	}
+	// 	return
+	// }
+	// log.Println("got cookie: ", cookie.Value)
 
 	d := json.NewDecoder(r.Body)
 	var form shortenReq
-	err = d.Decode(&form)
-	if err != nil {
+	if err := d.Decode(&form); err != nil {
 		log.Println("couldn't decode. reason: ", err)
 	}
 

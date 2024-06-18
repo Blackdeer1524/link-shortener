@@ -38,3 +38,7 @@ func (u *Users) Insert(
 	// }
 	return "some uuid", nil
 }
+
+func (u *Users) Authenticate(email string, password string) (string, error) {
+	return "some uuid", nil
+}

@@ -9,7 +9,7 @@ COPY ./cmd/authenticator/authenticator.go ./cmd/authenticator/authenticator.go
 COPY ./pkg/ ./pkg/
 
 ENV GOCACHE=/root/.cache/go-build
-RUN --mount=type=cache,target=/go/pkg/mod/ go build -v -o authenticator ./cmd/authenticator/authenticator.go 
+RUN --mount=type=cache,target=/root/.cache/go-build go build -v -o authenticator ./cmd/authenticator/authenticator.go 
 
 EXPOSE 8080
 ENTRYPOINT ["./authenticator"]

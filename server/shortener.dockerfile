@@ -9,7 +9,7 @@ COPY ./cmd/shortener/shortener.go ./cmd/shortener/shortener.go
 COPY ./pkg/ ./pkg/
 
 ENV GOCACHE=/root/.cache/go-build
-RUN --mount=type=cache,target=/go/pkg/mod/ go build -v -o shortener ./cmd/shortener/shortener.go 
+RUN --mount=type=cache,target=/root/.cache/go-build go build -v -o shortener ./cmd/shortener/shortener.go 
 
 EXPOSE 8080
 ENTRYPOINT ["./shortener"]
