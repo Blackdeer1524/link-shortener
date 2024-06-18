@@ -1,0 +1,15 @@
+services:
+  server:
+    ports:
+      - 8080:8080
+    build:
+      dockerfile: authenticator.dockerfile
+      context: .
+
+  shortener:
+    ports:
+      - 8081:8080
+    build:
+      dockerfile: shortener.dockerfile
+      context: .
+

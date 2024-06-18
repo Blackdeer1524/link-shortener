@@ -20,8 +20,9 @@ function App() {
     setMakingRequest(true);
     fetch("http://localhost:8081", {
       method: "POST",
+      credentials: "include",
       headers: {
-        "Content-Type": "multipart/form-data",
+        "Content-Type": "application/json; charset=utf-8",
       },
       body: JSON.stringify({
         url: longURL,
