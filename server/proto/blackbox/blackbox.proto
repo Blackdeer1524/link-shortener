@@ -17,7 +17,10 @@ message ValidateTokenReq {
 }
 
 message ValidateTokenRsp {
-  bool is_valid = 1;
+  oneof variant {
+    string user_id = 1;
+    string error = 2;
+  }
 }
 
 service BlackboxService {

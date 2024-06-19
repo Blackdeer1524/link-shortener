@@ -21,6 +21,20 @@ services:
       dockerfile: ./dockerfiles/blackbox.dockerfile
       context: .
 
+  db:
+    container_name: db
+    build:
+      dockerfile: ./dockerfiles/postgres.dockerfile
+      context: .
+    image: postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
   zoo:
     image: confluentinc/cp-zookeeper:7.3.2
     hostname: zoo
@@ -74,4 +88,7 @@ services:
   redis:
     container_name: redis
     image: redis:latest
+
+volumes:
+  db-data:
     

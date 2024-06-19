@@ -106,7 +106,12 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uuid, err := a.users.Insert(regReq.Name, regReq.Email, regReq.Password)
+	uuid, err := a.users.Insert(
+		context.TODO(),
+		regReq.Name,
+		regReq.Email,
+		regReq.Password,
+	)
 	if err != nil {
 		log.Println(
 			"couldnt't insert new user for",
@@ -119,7 +124,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 				Status:  response.StatusValidationError,
 				Message: "User already exists",
 			})
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(http.StatusBadRequest)
 			w.Write(pkg)
 		} else {
 			pkg, _ := json.Marshal(&response.Server{
@@ -177,7 +182,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 
 	http.SetCookie(w, &authCookie)
 	http.SetCookie(w, &jwtCookie)
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 
 	pkg, _ := json.Marshal(&response.Server{
 		Status:  response.StatusOK,
@@ -302,7 +307,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 
 	http.SetCookie(w, &authCookie)
 	http.SetCookie(w, &jwtCookie)
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 
 	pkg, _ := json.Marshal(&response.Server{
 		Status:  response.StatusOK,

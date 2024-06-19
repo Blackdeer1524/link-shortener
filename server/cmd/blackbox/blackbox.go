@@ -91,7 +91,7 @@ func (s *BlackboxServiceImpl) ValidateToken(
 
 	token := r.GetToken()
 
-	_, err := jwt.Parse(
+	parsedToken, err := jwt.Parse(
 		token,
 		func(*jwt.Token) (interface{}, error) {
 			return []byte(s.secret), nil
@@ -99,11 +99,26 @@ func (s *BlackboxServiceImpl) ValidateToken(
 		jwt.WithValidMethods([]string{"HS256"}),
 	)
 	if err != nil {
-		return nil, err
+		return &blackbox.ValidateTokenRsp{
+			Variant: &blackbox.ValidateTokenRsp_Error{
+				Error: err.Error(),
+			},
+		}, nil
+	}
+
+	sub, err := parsedToken.Claims.GetSubject()
+	if err != nil {
+		return &blackbox.ValidateTokenRsp{
+			Variant: &blackbox.ValidateTokenRsp_Error{
+				Error: err.Error(),
+			},
+		}, nil
 	}
 
 	res := &blackbox.ValidateTokenRsp{
-		IsValid: true,
+		Variant: &blackbox.ValidateTokenRsp_UserId{
+			UserId: sub,
+		},
 	}
 	return res, nil
 }

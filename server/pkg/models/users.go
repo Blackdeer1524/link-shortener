@@ -1,11 +1,14 @@
 package models
 
 import (
+	"context"
 	"errors"
 
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 )
-
 
 type Users struct {
 	pool *pgxpool.Pool
@@ -13,30 +16,35 @@ type Users struct {
 
 var ErrAlreadyExists = errors.New("User already exists")
 
-// TODO: check https://github.com/jackc/pgerrcode
+const hashCost = 12
+
 func (u *Users) Insert(
+	ctx context.Context,
 	name string,
 	email string,
 	password string,
 ) (string, error) {
-	// var uuid string
-	// err := u.pool.QueryRow(
-	// 	context.TODO(),
-	// 	`INSERT INTO Users(Name,Email,HashedPassword) Values ($1, $2, $3)`,
-	// 	name,
-	// 	email,
-	// 	hashedPwd,
-	// ).Scan(&uuid)
-	// if err != nil {
-	// 	var pgErr *pgconn.PgError
-	// 	if errors.As(err, &pgErr) {
-	//
-	// 		fmt.Println(pgErr.Message) // => syntax error at end of input
-	// 		fmt.Println(pgErr.Code)    // => 42601
-	// 	}
-	// 	reutrn "", err
-	// }
-	return "some uuid", nil
+	hashedPwd, err := bcrypt.GenerateFromPassword([]byte(password), hashCost)
+	if err != nil {
+		return "", err
+	}
+
+	var uuid string
+	err = u.pool.QueryRow(
+		context.TODO(),
+		`INSERT INTO Users(Name,Email,HashedPassword) Values ($1, $2, $3) returning Id`,
+		name,
+		email,
+		hashedPwd,
+	).Scan(&uuid)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
+			return "", ErrAlreadyExists
+		}
+		return "", err
+	}
+	return uuid, nil
 }
 
 func (u *Users) Authenticate(email string, password string) (string, error) {

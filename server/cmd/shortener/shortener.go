@@ -5,13 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"math/rand"
 	"net/http"
+	"os"
 	"shortener/pkg/middleware"
+	"shortener/pkg/models"
 	"shortener/pkg/response"
 	"shortener/proto/blackbox"
+	"strings"
+	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/go-playground/validator/v10"
-	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -23,11 +28,17 @@ type noAuthShortenReq struct {
 }
 
 type authShortenReq struct {
-	Url string `json:"url" validate:"required,url"`
+	Url            string    `json:"url"             validate:"required,url"`
+	ExpirationDate time.Time `json:"expiration_date" validate:"required,time"`
 }
 
 type shortener struct {
+	urls           *models.Urls
 	blackboxClient blackbox.BlackboxServiceClient
+	redirectorHost string
+
+	producer sarama.AsyncProducer
+	topic    string
 }
 
 type shortenerOption func(s *shortener) error
@@ -39,11 +50,66 @@ func WithBlackboxClient(c blackbox.BlackboxServiceClient) shortenerOption {
 	}
 }
 
-func WithRedis(rdb *redis.Client) shortenerOption {
+func WithUrlsModel(u *models.Urls) shortenerOption {
+	return func(s *shortener) error {
+		s.urls = u
+		return nil
+	}
 }
 
-func NewShortener(c blackbox.BlackboxServiceClient) *shortener {
-	return &shortener{blackboxClient: c}
+func WithKafkaProducer(p sarama.AsyncProducer, topic string) shortenerOption {
+	return func(s *shortener) error {
+		s.producer = p
+		s.topic = topic
+		return nil
+	}
+}
+
+func WithRedirectorHost(host string) shortenerOption {
+	return func(s *shortener) error {
+		s.redirectorHost = host
+		return nil
+	}
+}
+
+func NewShortener(opts ...shortenerOption) (*shortener, error) {
+	s := new(shortener)
+	for _, opt := range opts {
+		if err := opt(s); err != nil {
+			return nil, err
+		}
+	}
+
+	if s.urls == nil {
+		return nil, errors.New("no urls models provided")
+	}
+
+	if s.blackboxClient == nil {
+		return nil, errors.New("no blackbox client provided")
+	}
+
+	if s.producer == nil {
+		return nil, errors.New("no kafka producer provided")
+	}
+
+	if s.redirectorHost == "" {
+		return nil, errors.New("no redirector host provided")
+	}
+
+	return s, nil
+}
+
+// excludes zero, uppercase 'O', uppercase 'I', and lowercase 'l'
+var readerFriendlyCharset = []byte(
+	"123456789abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ_-",
+)
+
+func generateShortUrl(length int) string {
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = readerFriendlyCharset[rand.Int63()%int64(len(readerFriendlyCharset))]
+	}
+	return string(b)
 }
 
 func (s *shortener) shortenUrl(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +165,7 @@ func (s *shortener) shortenUrl(w http.ResponseWriter, r *http.Request) {
 		"got shortening request with JWT token from %s. checking token validity.\n",
 		r.RemoteAddr,
 	)
-	isValid, err := s.blackboxClient.ValidateToken(
+	tokenInfo, err := s.blackboxClient.ValidateToken(
 		context.TODO(),
 		&blackbox.ValidateTokenReq{
 			Token: JWTCookie.Value,
@@ -121,50 +187,82 @@ func (s *shortener) shortenUrl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !isValid.GetIsValid() {
-		log.Println("got invalid tokin from", r.RemoteAddr)
+	if validationError := tokenInfo.GetError(); validationError != "" {
+		log.Printf(
+			"invalid jwt from %s. reason: %s\n",
+			r.RemoteAddr,
+			validationError,
+		)
+
 		res, _ := json.Marshal(&response.Server{
-			Status:  response.StatusError,
-			Message: "JWT is invalid",
+			Status:  response.StatusValidationError,
+			Message: "couldn't validate JWT",
 		})
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(res)
+		return
 	}
-	log.Println("got valid tokin from", r.RemoteAddr)
-	s.shortenAuth(w, r)
+
+	log.Println(
+		"got valid tokin from %s with user id %s\n ",
+		r.RemoteAddr,
+		tokenInfo.GetUserId(),
+	)
+
+	s.shortenAuth(tokenInfo.GetUserId(), w, r)
 }
 
-func (s *shortener) shortenAuth(w http.ResponseWriter, r *http.Request) {
+func (s *shortener) shortenAuth(
+	from string,
+	w http.ResponseWriter,
+	r *http.Request,
+) {
 	d := json.NewDecoder(r.Body)
 	var form authShortenReq
 	if err := d.Decode(&form); err != nil {
-		log.Println("couldn't decode. reason:", err)
+		log.Println("couldn't decode auth shortening req. reason:", err)
 		res, _ := json.Marshal(&response.Server{
-			Status:  response.StatusError,
-			Message: "Invalid form",
+			Status:  response.StatusValidationError,
+			Message: "Bad shortening form",
 		})
+
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write(res)
 		return
 	}
 
-	if err := validate.Struct(&form); err != nil {
-		res, _ := json.Marshal(&response.Server{
-			Status:  response.StatusValidationError,
-			Message: "form couldn't pass validation",
-		})
+	var shortUrl string
+	for {
+		shortUrl = generateShortUrl(5)
+		// TODO: ctx deadline check
+		exists, err := s.urls.CheckExistence(context.TODO(), shortUrl)
+		if err != nil {
+			log.Println("couldn't check existence of short url. reason:", err)
+			continue
+		}
+		if !exists {
+			break
+		}
+	}
 
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write(res)
-		return
+	m, _ := json.Marshal(&response.Shortener{
+		From:           from,
+		ShortUrl:       shortUrl,
+		LongUrl:        form.Url,
+		ExpirationDate: time.Now().Add(time.Hour * 24 * 30),
+	})
+
+	s.producer.Input() <- &sarama.ProducerMessage{
+		Topic: s.topic,
+		Value: sarama.ByteEncoder(m),
 	}
 
 	res, _ := json.Marshal(&response.Server{
-		Status:  0,
-		Message: "`" + form.Url + "` short with auth",
+		Status:  response.StatusOK,
+		Message: s.redirectorHost + "/" + shortUrl,
 	})
 
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	w.Write(res)
 }
 
@@ -172,15 +270,49 @@ func (s *shortener) shortenNoAuth(w http.ResponseWriter, r *http.Request) {
 	d := json.NewDecoder(r.Body)
 	var form noAuthShortenReq
 	if err := d.Decode(&form); err != nil {
-		log.Println("couldn't decode. reason:", err)
+		log.Println("couldn't decode no auth shortening req. reason:", err)
+		res, _ := json.Marshal(&response.Server{
+			Status:  response.StatusValidationError,
+			Message: "Bad shortening form",
+		})
+
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write(res)
+		return
+	}
+
+	var shortUrl string
+	for {
+		shortUrl = generateShortUrl(5)
+		// TODO: ctx deadline check
+		exists, err := s.urls.CheckExistence(context.TODO(), shortUrl)
+		if err != nil {
+			log.Println("couldn't check existence of short url. reason:", err)
+			continue
+		}
+		if !exists {
+			break
+		}
+	}
+
+	m, _ := json.Marshal(&response.Shortener{
+		From:           "",
+		ShortUrl:       shortUrl,
+		LongUrl:        form.Url,
+		ExpirationDate: time.Now().Add(time.Hour * 24 * 30),
+	})
+
+	s.producer.Input() <- &sarama.ProducerMessage{
+		Topic: s.topic,
+		Value: sarama.ByteEncoder(m),
 	}
 
 	res, _ := json.Marshal(&response.Server{
-		Status:  0,
-		Message: "`" + form.Url + "` short no auth",
+		Status:  response.StatusOK,
+		Message: s.redirectorHost + "/" + shortUrl,
 	})
 
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	w.Write(res)
 }
 
@@ -201,7 +333,35 @@ func main() {
 	}
 	defer conn.Close()
 
-	s := NewShortener(blackbox.NewBlackboxServiceClient(conn))
+	u, err := models.NewUrls(
+		models.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
+	)
+	if err != nil {
+		log.Fatalln("couldn't instantiate urls model. reason:", err)
+	}
+
+	conf := sarama.NewConfig()
+	conf.Producer.RequiredAcks = sarama.WaitForAll
+	conf.Producer.Flush.Frequency = 3 * time.Second
+	conf.Producer.Return.Errors = false // TODO: handle errors (Dead Letter Queue?)
+
+	p, err := sarama.NewAsyncProducer(
+		strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
+		conf,
+	)
+	if err != nil {
+		log.Fatalln("couldn't kafka producer. reason:", err)
+	}
+
+	s, err := NewShortener(
+		WithBlackboxClient(blackbox.NewBlackboxServiceClient(conn)),
+		WithUrlsModel(u),
+		WithKafkaProducer(p, os.Getenv("KAFKA_STORAGE_TOPIC")),
+		WithRedirectorHost(os.Getenv("REDIRECTOR_HOST")),
+	)
+	if err != nil {
+		log.Fatalln("couldn't instantiate shortener. reason:", err)
+	}
 
 	http.HandleFunc(
 		"OPTIONS /create_short_url",

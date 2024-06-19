@@ -15,7 +15,7 @@ type Server struct {
 
 type Shortener struct {
 	From           string    `json:"from"`
-	ShortLink       string    `json:"short_url"`
-	LongLink        string    `json:"long_url"`
+	ShortUrl       string    `json:"short_url"`
+	LongUrl        string    `json:"long_url"`
 	ExpirationDate time.Time `json:"expiration_date"`
 }
