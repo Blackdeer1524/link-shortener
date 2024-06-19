@@ -12,13 +12,16 @@ function App() {
 
   const [cookies, _, removeCookie] = useCookies(["auth"]);
 
+  const [errorMessage, setErrorMessage] = useState("");
+
   const handleSubmit = () => {
     if (makingRequest) {
       return;
     }
-
     setMakingRequest(true);
-    fetch("http://localhost:8081", {
+    setErrorMessage("");
+
+    fetch("http://localhost:8081/create_short_url", {
       method: "POST",
       credentials: "include",
       headers: {
@@ -29,12 +32,15 @@ function App() {
       }),
     })
       .catch((reason) => {
-        alert(reason);
         setMakingRequest(false);
       })
       .then((response) => response.json())
       .then((response) => {
         setMakingRequest(false);
+        if (response["status"] == 1) {
+          setErrorMessage(response["message"]);
+          return;
+        }
         setShortURL(response["message"]);
       });
   };
@@ -60,6 +66,7 @@ function App() {
           name="shortener-box"
           className="flex min-h-[40%] w-[80%] flex-col items-center gap-5 rounded-xl bg-[#6B6F80] p-10"
         >
+          <p>{errorMessage}</p>
           <input
             type="url"
             id="long-url-input"

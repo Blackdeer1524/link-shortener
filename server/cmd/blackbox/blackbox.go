@@ -62,6 +62,8 @@ func (s *BlackboxServiceImpl) IssueToken(
 		return nil, err
 	}
 
+	log.Println("issuing JWT for", r.GetUserId())
+
 	token := jwt.NewWithClaims(
 		jwt.SigningMethodHS256,
 		jwt.MapClaims{
@@ -92,13 +94,11 @@ func (s *BlackboxServiceImpl) ValidateToken(
 	_, err := jwt.Parse(
 		token,
 		func(*jwt.Token) (interface{}, error) {
-			return s.secret, nil
+			return []byte(s.secret), nil
 		},
 		jwt.WithValidMethods([]string{"HS256"}),
 	)
 	if err != nil {
-		// TODO: remove this log
-		log.Println("invalid token. reason: ", err)
 		return nil, err
 	}
 
@@ -113,7 +113,7 @@ func main() {
 
 	lis, err := net.Listen("tcp", ":8080")
 	if err != nil {
-		log.Fatalln("couldn't start listening for connections. reason: ", err)
+		log.Fatalln("couldn't start listening for connections. reason:", err)
 	}
 
 	ctx, cancel := signal.NotifyContext(
@@ -128,7 +128,7 @@ func main() {
 		WithContext(ctx),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate service impl. reason: ", err)
+		log.Fatalln("couldn't instantiate service impl. reason:", err)
 	}
 	blackbox.RegisterBlackboxServiceServer(s, service)
 
@@ -138,6 +138,6 @@ func main() {
 	}()
 
 	if err := s.Serve(lis); err != nil {
-		log.Fatalln("fatal serve error: ", err)
+		log.Fatalln("fatal serve error:", err)
 	}
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,28 +10,30 @@ import (
 	"shortener/pkg/middleware"
 	"shortener/pkg/models"
 	"shortener/pkg/response"
+	"shortener/proto/blackbox"
 
 	"github.com/go-playground/validator/v10"
-	"github.com/golang-jwt/jwt/v5"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type App struct {
-	secret string
-	users  *models.Users // TODO: replace with an interface
+	users          *models.Users // TODO: replace with an interface
+	blackboxClient blackbox.BlackboxServiceClient
 }
 
 type AppOption func(*App) error
 
-func WithSecret(secret string) AppOption {
+func WithUsersDB(users *models.Users) AppOption {
 	return func(a *App) error {
-		a.secret = secret
+		a.users = users
 		return nil
 	}
 }
 
-func WithUsersDB(users *models.Users) AppOption {
+func WithBlackboxClient(c blackbox.BlackboxServiceClient) AppOption {
 	return func(a *App) error {
-		a.users = users
+		a.blackboxClient = c
 		return nil
 	}
 }
@@ -43,11 +46,11 @@ func NewApp(opts ...AppOption) (*App, error) {
 			return nil, err
 		}
 	}
-	if a.secret == "" {
-		return nil, fmt.Errorf("no secret key provided")
-	}
 	if a.users == nil {
 		return nil, fmt.Errorf("no Users model provided")
+	}
+	if a.blackboxClient == nil {
+		return nil, fmt.Errorf("no blackbox client provided")
 	}
 
 	return a, nil
@@ -60,29 +63,18 @@ type RegisterRequest struct {
 	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=Password"`
 }
 
-func (a *App) issueToken(userId string) (string, error) {
-	token := jwt.NewWithClaims(
-		jwt.SigningMethodHS256,
-		jwt.MapClaims{
-			"sub": userId,
-		})
-
-	signedToken, err := token.SignedString([]byte(a.secret))
-	return signedToken, err
-}
-
 var validate = validator.New(validator.WithRequiredStructEnabled())
 
 func (a *App) register(w http.ResponseWriter, r *http.Request) {
-	log.Println("got new registration request from ", r.RemoteAddr)
+	log.Println("got new registration request from", r.RemoteAddr)
 
 	d := json.NewDecoder(r.Body)
 	var regReq RegisterRequest
 	if err := d.Decode(&regReq); err != nil {
 		log.Println(
-			"couldn't parse registration request from ",
+			"couldn't parse registration request from",
 			r.RemoteAddr,
-			". reason: ",
+			". reason:",
 			err.Error(),
 		)
 
@@ -98,9 +90,9 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 
 	if err := validate.Struct(&regReq); err != nil {
 		log.Println(
-			"invalid registration form from ",
+			"invalid registration form from",
 			r.RemoteAddr,
-			". reason: ",
+			". reason:",
 			err.Error(),
 		)
 
@@ -117,9 +109,9 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 	uuid, err := a.users.Insert(regReq.Name, regReq.Email, regReq.Password)
 	if err != nil {
 		log.Println(
-			"couldnt't insert new user for ",
+			"couldnt't insert new user for",
 			r.RemoteAddr,
-			". reason: ",
+			". reason:",
 			err.Error(),
 		)
 		if errors.Is(err, models.ErrAlreadyExists) {
@@ -141,12 +133,17 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	signedToken, err := a.issueToken(uuid)
+	signedToken, err := a.blackboxClient.IssueToken(
+		context.TODO(),
+		&blackbox.IssueTokenReq{
+			UserId: uuid,
+		},
+	)
 	if err != nil {
 		log.Println(
-			"couldnt't sign token for ",
+			"couldnt't sign token for",
 			r.RemoteAddr,
-			". reason: ",
+			". reason:",
 			err.Error(),
 		)
 		pkg, _ := json.Marshal(&response.Server{
@@ -170,7 +167,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 
 	jwtCookie := http.Cookie{
 		Name:     "JWT",
-		Value:    signedToken,
+		Value:    signedToken.GetToken(),
 		Path:     "/",
 		MaxAge:   3600,
 		Secure:   true,
@@ -202,15 +199,15 @@ type LoginRequest struct {
 }
 
 func (a *App) login(w http.ResponseWriter, r *http.Request) {
-	log.Println("got login request from ", r.RemoteAddr)
+	log.Println("got login request from", r.RemoteAddr)
 
 	d := json.NewDecoder(r.Body)
 	loginForm := new(LoginRequest)
 	if err := d.Decode(loginForm); err != nil {
 		log.Println(
-			"couldn't parse login request from ",
+			"couldn't parse login request from",
 			r.RemoteAddr,
-			". reason: ",
+			". reason:",
 			err.Error(),
 		)
 
@@ -226,9 +223,9 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 
 	if err := validate.Struct(loginForm); err != nil {
 		log.Println(
-			"invalid login form from ",
+			"invalid login form from",
 			r.RemoteAddr,
-			". reason: ",
+			". reason:",
 			err.Error(),
 		)
 
@@ -245,9 +242,9 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	userId, err := a.users.Authenticate(loginForm.Email, loginForm.Password)
 	if err != nil {
 		log.Println(
-			"wrong email or password for login attempt from ",
+			"wrong email or password for login attempt from",
 			r.RemoteAddr,
-			". reason: ",
+			". reason:",
 			err.Error(),
 		)
 
@@ -261,12 +258,17 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	signedToken, err := a.issueToken(userId)
+	signedToken, err := a.blackboxClient.IssueToken(
+		context.TODO(),
+		&blackbox.IssueTokenReq{
+			UserId: userId,
+		},
+	)
 	if err != nil {
 		log.Println(
-			"couldnt't sign token on login attempt for ",
+			"couldnt't sign token on login attempt for",
 			r.RemoteAddr,
-			". reason: ",
+			". reason:",
 			err.Error(),
 		)
 		pkg, _ := json.Marshal(&response.Server{
@@ -290,7 +292,7 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 
 	jwtCookie := http.Cookie{
 		Name:     "JWT",
-		Value:    signedToken,
+		Value:    signedToken.GetToken(),
 		Path:     "/",
 		MaxAge:   3600,
 		Secure:   true,
@@ -310,22 +312,43 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 	w.Write(pkg)
 
 	log.Println(
-		"successful login from ",
+		"successful login from",
 		r.RemoteAddr,
 	)
 }
 
 func main() {
+	conn, err := grpc.NewClient(
+		"blackbox:8080",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Fatalln("couldn't dial auth service. reason:", err)
+	}
+	defer conn.Close()
+
+	c := blackbox.NewBlackboxServiceClient(conn)
 	usersModel := &models.Users{}
-	app, err := NewApp(WithSecret("some secret"), WithUsersDB(usersModel))
+	app, err := NewApp(WithUsersDB(usersModel), WithBlackboxClient(c))
 	if err != nil {
 		panic(err)
 	}
 
 	http.HandleFunc(
-		"OPTIONS /",
+		"OPTIONS /register",
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Add("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().
+				Add("Access-Control-Allow-Origin", "http://localhost:5173")
+			w.Header().Add("Access-Control-Allow-Credentials", "true")
+			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
+		}),
+	)
+
+	http.HandleFunc(
+		"OPTIONS /login",
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().
+				Add("Access-Control-Allow-Origin", "http://localhost:5173")
 			w.Header().Add("Access-Control-Allow-Credentials", "true")
 			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
 		}),
