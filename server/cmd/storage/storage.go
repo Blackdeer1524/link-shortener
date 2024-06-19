@@ -129,6 +129,7 @@ func main() {
 	if err != nil {
 		log.Fatalln("couldn't instantiate urls model. reason:", err)
 	}
+	defer u.Close()
 
 	h, err := NewGroupHandler(WithContext(ctx), WithUrlsModel(u))
 	if err != nil {

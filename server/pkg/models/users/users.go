@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -14,7 +15,7 @@ type Model struct {
 	pool *pgxpool.Pool
 }
 
-type usersOption func (u *Model) error
+type usersOption func(u *Model) error
 
 func WithPool(ctx context.Context, dsn string) usersOption {
 	return func(u *Model) error {
@@ -45,8 +46,11 @@ func NewUsers(opts ...usersOption) (*Model, error) {
 	return u, nil
 }
 
+var ErrAlreadyExists = errors.New("user already exists")
 
-var ErrAlreadyExists = errors.New("User already exists")
+var ErrNotFound = errors.New("user not found")
+
+var ErrWrongCredentials = errors.New("wrong credentials")
 
 const hashCost = 12
 
@@ -79,6 +83,30 @@ func (u *Model) Insert(
 	return uuid, nil
 }
 
-func (u *Model) Authenticate(email string, password string) (string, error) {
-	return "some uuid", nil
+func (u *Model) Authenticate(
+	ctx context.Context,
+	email string,
+	password string,
+) (string, error) {
+	var dbHashedPassword []byte
+	var id string
+	err := u.pool.QueryRow(ctx, `SELECT Id, HashedPassword from Users where Users.Email = $1`, email).
+		Scan(&id, &dbHashedPassword)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		} else {
+			return "", err
+		}
+	}
+
+	err = bcrypt.CompareHashAndPassword(dbHashedPassword, []byte(password))
+	if err != nil {
+		return "", ErrWrongCredentials
+	}
+	return id, nil
+}
+
+func (u *Model) Close() {
+	u.pool.Close()
 }

@@ -6,6 +6,9 @@ CREATE TABLE Users (
 )
 ;
 
+CREATE UNIQUE INDEX users_unique_emails ON Users(Email) INCLUDE(HashedPassword)
+;
+
 CREATE TABLE Urls (
 	ShortUrl VarChar(5) PRIMARY KEY,
 	LongUrl VarChar(300) NOT NULL,

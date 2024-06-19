@@ -144,3 +144,7 @@ func (u *Model) Insert(ctx context.Context, rr []*response.Shortener) {
 
 	defer res.Close()
 }
+
+func (u *Model) Close() {
+	u.pool.Close()
+}

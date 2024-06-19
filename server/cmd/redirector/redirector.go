@@ -77,7 +77,10 @@ func main() {
 		log.Fatalln("couldn't instantiate urls model. reason:", err)
 	}
 
+	defer u.Close()
+
 	re, err := NewRedirector(WithUrlsModel(u))
 
 	http.HandleFunc("GET /", re.redirect)
+	http.ListenAndServe(":8080", nil)
 }

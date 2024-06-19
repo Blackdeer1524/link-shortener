@@ -341,6 +341,7 @@ func main() {
 	if err != nil {
 		log.Fatalln("couldn't instantiate users model. reason:", err)
 	}
+	defer usersModel.Close()
 
 	app, err := NewApp(WithUsersDB(usersModel), WithBlackboxClient(c))
 	if err != nil {

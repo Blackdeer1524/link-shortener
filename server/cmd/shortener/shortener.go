@@ -342,6 +342,7 @@ func main() {
 	if err != nil {
 		log.Fatalln("couldn't instantiate urls model. reason:", err)
 	}
+	defer u.Close()
 
 	conf := sarama.NewConfig()
 	conf.Producer.RequiredAcks = sarama.WaitForAll
