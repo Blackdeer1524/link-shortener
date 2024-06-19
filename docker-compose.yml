@@ -25,6 +25,20 @@ services:
       kafka:
         condition: service_healthy
 
+  redirector:
+    container_name: redirector
+    ports:
+      - 8082:8080
+    build:
+      context: ./server
+      dockerfile: ../dockerfiles/redirector.dockerfile 
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+      db:
+        condition: service_started
+
   blackbox:
     container_name: blackbox
     build:

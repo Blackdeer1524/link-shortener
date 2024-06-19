@@ -67,9 +67,9 @@ func (u *Model) CheckExistence(
 	var res bool
 
 	err := u.rdb.Get(ctx, shortUrl).Err()
-	if !errors.Is(err, redis.Nil) {
+	if err == nil {
 		return true, nil
-	} else {
+	} else if !errors.Is(err, redis.Nil) {
 		log.Println("couldn't get result from redis. reason:", err)
 	}
 
@@ -79,6 +79,37 @@ func (u *Model) CheckExistence(
 		shortUrl,
 	).Scan(&res)
 	return res, err
+}
+
+var ErrNotFound = errors.New("url not found")
+
+func (u *Model) GetLongUrl(
+	ctx context.Context,
+	shortUrl string,
+) (string, error) {
+	cacheRes := u.rdb.Get(ctx, shortUrl)
+	if cacheRes.Err() == nil {
+		longUrl, err := cacheRes.Result()
+		if err == nil {
+			return longUrl, nil
+		} else {
+			log.Printf("couldn't extract value from redis result. reason:", err)
+		}
+	} else if cacheRes.Err() != redis.Nil {
+		log.Println("couldn't get value by key from redis. reason:", cacheRes.Err())
+	}
+
+	var longUrl string
+	err := u.pool.QueryRow(
+		ctx,
+		`SELECT LongUrl from Urls where Urls.ShortUrl = $1`,
+		shortUrl,
+	).Scan(&longUrl)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+
+	return longUrl, err
 }
 
 func (u *Model) Insert(ctx context.Context, rr []*response.Shortener) {
@@ -105,7 +136,7 @@ func (u *Model) Insert(ctx context.Context, rr []*response.Shortener) {
 			)
 		} else {
 			err := u.rdb.Set(ctx, urlInfo.ShortUrl, urlInfo.LongUrl, time.Hour*24).Err()
-			if err != redis.Nil {
+			if err != nil {
 				log.Println("coulnd't put short url into cache. reason:", err)
 			}
 		}

@@ -366,7 +366,6 @@ func main() {
 		log.Fatalln("couldn't instantiate shortener. reason:", err)
 	}
 
-	log.Println("started listening")
 
 	http.HandleFunc(
 		"OPTIONS /create_short_url",
