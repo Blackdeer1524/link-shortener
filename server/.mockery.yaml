@@ -1,0 +1,24 @@
+with-expecter: True
+packages:
+  shortener/internal/authenticator: 
+    config:
+      dir: "{{.InterfaceDir}}"
+    interfaces:
+      Users:
+
+  shortener/proto/blackbox:
+    interfaces: 
+      BlackboxServiceClient:
+
+  shortener/internal/redirector: 
+    config:
+      dir: "{{.InterfaceDir}}"
+    interfaces:
+      Urls:
+
+  shortener/internal/shortener: 
+    config:
+      dir: "{{.InterfaceDir}}"
+    interfaces:
+      Urls:
+

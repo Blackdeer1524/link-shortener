@@ -6,65 +6,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"shortener/internal/redirector"
 	"shortener/pkg/models/urls"
+	"syscall"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
-
-type redirector struct {
-	rdb  *redis.Client
-	urls *urls.Model
-}
-
-type redirectorOption func(r *redirector) error
-
-func WithUrlsModel(u *urls.Model) redirectorOption {
-	return func(r *redirector) error {
-		r.urls = u
-		return nil
-	}
-}
-
-func NewRedirector(opts ...redirectorOption) (*redirector, error) {
-	r := new(redirector)
-	for _, opt := range opts {
-		if err := opt(r); err != nil {
-			return nil, err
-		}
-	}
-	if r.urls == nil {
-		return nil, errors.New("no urls model provided")
-	}
-	return r, nil
-}
-
-func (re *redirector) redirect(w http.ResponseWriter, r *http.Request) {
-	shortUrl := r.URL.Path
-	if len(shortUrl) != 5 {
-		http.NotFound(w, r)
-		return
-	}
-
-	log.Printf(
-		"got new shortening request from %s: %s\n",
-		r.RemoteAddr,
-		shortUrl,
-	)
-
-	longUrl, err := re.urls.GetLongUrl(context.TODO(), shortUrl)
-	if err == nil {
-		http.Redirect(w, r, longUrl, http.StatusMovedPermanently)
-		return
-	}
-	if !errors.Is(err, urls.ErrNotFound) {
-		log.Printf(
-			"couldn't get long url for %s from db. reason: %v",
-			shortUrl,
-			err,
-		)
-	}
-	http.NotFound(w, r)
-}
 
 func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: "redis:6379"})
@@ -74,13 +23,40 @@ func main() {
 		urls.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate urls model. reason:", err)
+		log.Fatalln("couldn't instantiate urls model. error:", err)
 	}
-
 	defer u.Close()
 
-	re, err := NewRedirector(WithUrlsModel(u))
+	re, err := redirector.New(redirector.WithUrlsModel(u))
 
-	http.HandleFunc("GET /", re.redirect)
-	http.ListenAndServe(":8080", nil)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /", re.Redirect)
+
+	server := http.Server{
+		Addr:         ":8080",
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  time.Minute,
+	}
+
+	ctx, cancel := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGTERM,
+		syscall.SIGINT,
+	)
+	defer cancel()
+
+	go func() {
+		<-ctx.Done()
+		err = server.Shutdown(context.TODO())
+		if err != nil {
+			log.Printf("error occured on Shutdown():%v\n", err)
+		}
+	}()
+
+	err = server.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("error during shutdown:%v\n", err)
+	}
 }

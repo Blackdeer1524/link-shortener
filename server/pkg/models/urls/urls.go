@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"shortener/pkg/response"
+	"shortener/pkg/domain"
+	"shortener/pkg/responses"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -70,7 +71,7 @@ func (u *Model) CheckExistence(
 	if err == nil {
 		return true, nil
 	} else if !errors.Is(err, redis.Nil) {
-		log.Println("couldn't get result from redis. reason:", err)
+		log.Println("couldn't get result from redis. error:", err)
 	}
 
 	err = u.pool.QueryRow(
@@ -93,16 +94,16 @@ func (u *Model) GetLongUrl(
 		if err == nil {
 			return longUrl, nil
 		} else {
-			log.Printf("couldn't extract value from redis result. reason:", err)
+			log.Printf("couldn't extract value from redis result. error:", err)
 		}
 	} else if cacheRes.Err() != redis.Nil {
-		log.Println("couldn't get value by key from redis. reason:", cacheRes.Err())
+		log.Println("couldn't get value by key from redis. error:", cacheRes.Err())
 	}
 
 	var longUrl string
 	err := u.pool.QueryRow(
 		ctx,
-		`SELECT LongUrl from Urls where Urls.ShortUrl = $1`,
+		`SELECT LongUrl from Urls where Urls.ShortUrl = $1 AND now() < Urls.ExpirationDate`,
 		shortUrl,
 	).Scan(&longUrl)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -112,7 +113,7 @@ func (u *Model) GetLongUrl(
 	return longUrl, err
 }
 
-func (u *Model) Insert(ctx context.Context, rr []*response.Shortener) {
+func (u *Model) Insert(ctx context.Context, rr []*responses.Shortener) {
 	batch := pgx.Batch{}
 
 	for _, urlInfo := range rr {
@@ -126,23 +127,65 @@ func (u *Model) Insert(ctx context.Context, rr []*response.Shortener) {
 	}
 
 	res := u.pool.SendBatch(ctx, &batch)
+	defer res.Close()
+
 	for _, urlInfo := range rr {
-		if _, err := res.Exec(); err != nil {
+		_, err := res.Exec()
+		if err != nil {
 			log.Printf(
-				"error occured during insert of %s (%s). reason: %s\n",
-				urlInfo.LongUrl,
+				"error occured during insert of %s (%s). error: %s\n",
 				urlInfo.ShortUrl,
+				urlInfo.LongUrl,
 				err.Error(),
 			)
 		} else {
 			err := u.rdb.Set(ctx, urlInfo.ShortUrl, urlInfo.LongUrl, time.Hour*24).Err()
 			if err != nil {
-				log.Println("coulnd't put short url into cache. reason:", err)
+				log.Println("coulnd't put short url into cache. error:", err)
 			}
 		}
 	}
+}
 
-	defer res.Close()
+func (u *Model) History(
+	ctx context.Context,
+	userId string,
+) ([]*domain.UrlInfo, error) {
+	rows, err := u.pool.Query(
+		ctx,
+		"SELECT ShortUrl, LongUrl, ExpirationDate FROM Urls WHERE UserId = $1 AND ExpirationDate > now()",
+		userId,
+	)
+	defer rows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	res := []*domain.UrlInfo{}
+	for rows.Next() {
+		if err := rows.Err(); err != nil {
+			log.Printf(
+				"couldn't read row on request from %s. error: %v\n",
+				userId,
+				err,
+			)
+			continue
+		}
+
+		var record domain.UrlInfo
+
+		if err := rows.Scan(&record.ShortUrl, &record.LongUrl, &record.ExpirationDate); err != nil {
+			log.Printf(
+				"couldn't scan from row on request from %s. error: %v\n",
+				userId,
+				err,
+			)
+			continue
+		}
+
+		res = append(res, &record)
+	}
+	return res, nil
 }
 
 func (u *Model) Close() {

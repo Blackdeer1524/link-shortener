@@ -6,12 +6,15 @@ export default function SignUp() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  const [errorMessage, setErrorMessage] = useState("");
+  const [waitingResponse, setWaitingResponse] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("\xa0");
 
   const navigate = useNavigate();
 
   const handleSubmit = () => {
-    // TODO: data validation on client
+    setErrorMessage("\xa0");
+    setWaitingResponse(true);
+
     fetch("http://localhost:8080/login", {
       method: "POST",
       credentials: "include",
@@ -22,15 +25,21 @@ export default function SignUp() {
         email: email,
         password: password,
       }),
-    }).then((response) => {
-      if (response.status == 400) {
-        response.json().then((response) => {
-          setErrorMessage(response["message"]);
+    })
+      .catch((reason) => {
+        setErrorMessage("Couldn't reach server");
+        setWaitingResponse(false);
+      })
+      .then((response) => {
+        response.json().then((jResp) => {
+          setWaitingResponse(false);
+          if (response.status == 200) {
+            navigate("/");
+          } else {
+            setErrorMessage(jResp["message"]);
+          }
         });
-      } else {
-        navigate("/");
-      }
-    });
+      });
   };
 
   return (
@@ -38,6 +47,9 @@ export default function SignUp() {
       <DefaultNavigation />
       <div className="flex h-full w-full items-center justify-center">
         <div className="flex w-[60%] flex-col items-center justify-around gap-10 bg-[#6B6F80] p-10">
+          <p className="text-red-500 text-3xl font-bold whitespace-pre-wrap">
+            {errorMessage}
+          </p>
           <input
             className="w-full rounded-xl p-2 text-center text-5xl"
             placeholder="Email"
@@ -53,8 +65,9 @@ export default function SignUp() {
           <button
             className="rounded-xl bg-white p-2 text-5xl"
             onClick={() => handleSubmit()}
+            disabled={waitingResponse}
           >
-            Log in
+            {waitingResponse ? "Waiting" : "Log in"}
           </button>
         </div>
       </div>

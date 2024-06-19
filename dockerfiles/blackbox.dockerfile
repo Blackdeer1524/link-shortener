@@ -17,6 +17,7 @@ RUN go mod download && go mod verify
 
 COPY ./cmd/blackbox/blackbox.go ./cmd/blackbox/blackbox.go
 COPY ./pkg/ ./pkg/
+COPY ./internal/blackbox ./internal/blackbox
 
 COPY ./proto/blackbox/blackbox.proto ./proto/blackbox/blackbox.proto 
 RUN protoc --go_out=. --go_opt=paths=source_relative \

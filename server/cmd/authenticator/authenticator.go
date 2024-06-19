@@ -2,326 +2,23 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"shortener/internal/authenticator"
 	"shortener/pkg/middleware"
 	"shortener/pkg/models/users"
-	"shortener/pkg/response"
 	"shortener/proto/blackbox"
+	"strings"
+	"syscall"
+	"time"
 
-	"github.com/go-playground/validator/v10"
+	"github.com/IBM/sarama"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
-
-type App struct {
-	users          *users.Model // TODO: replace with an interface
-	blackboxClient blackbox.BlackboxServiceClient
-}
-
-type AppOption func(*App) error
-
-func WithUsersDB(users *users.Model) AppOption {
-	return func(a *App) error {
-		a.users = users
-		return nil
-	}
-}
-
-func WithBlackboxClient(c blackbox.BlackboxServiceClient) AppOption {
-	return func(a *App) error {
-		a.blackboxClient = c
-		return nil
-	}
-}
-
-func NewApp(opts ...AppOption) (*App, error) {
-	a := new(App)
-	for _, opt := range opts {
-		err := opt(a)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if a.users == nil {
-		return nil, fmt.Errorf("no Users model provided")
-	}
-	if a.blackboxClient == nil {
-		return nil, fmt.Errorf("no blackbox client provided")
-	}
-
-	return a, nil
-}
-
-type RegisterRequest struct {
-	Name            string `json:"name"             validate:"required,gt=0,lt=300"`
-	Email           string `json:"email"            validate:"required,email"`
-	Password        string `json:"password"         validate:"required,gte=8,lt=64"`
-	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=Password"`
-}
-
-var validate = validator.New(validator.WithRequiredStructEnabled())
-
-func (a *App) register(w http.ResponseWriter, r *http.Request) {
-	log.Println("got new registration request from", r.RemoteAddr)
-
-	d := json.NewDecoder(r.Body)
-	var regReq RegisterRequest
-	if err := d.Decode(&regReq); err != nil {
-		log.Println(
-			"couldn't parse registration request from",
-			r.RemoteAddr,
-			". reason:",
-			err.Error(),
-		)
-
-		pkg, _ := json.Marshal(&response.Server{
-			Status:  response.StatusError,
-			Message: "Couldn't parse registration request",
-		})
-
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write(pkg)
-		return
-	}
-
-	if err := validate.Struct(&regReq); err != nil {
-		log.Println(
-			"invalid registration form from",
-			r.RemoteAddr,
-			". reason:",
-			err.Error(),
-		)
-
-		pkg, _ := json.Marshal(&response.Server{
-			Status:  response.StatusValidationError,
-			Message: "invalid registration form from",
-		})
-
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write(pkg)
-		return
-	}
-
-	uuid, err := a.users.Insert(
-		context.TODO(),
-		regReq.Name,
-		regReq.Email,
-		regReq.Password,
-	)
-	if err != nil {
-		log.Println(
-			"couldnt't insert new user for",
-			r.RemoteAddr,
-			". reason:",
-			err.Error(),
-		)
-		if errors.Is(err, users.ErrAlreadyExists) {
-			pkg, _ := json.Marshal(&response.Server{
-				Status:  response.StatusValidationError,
-				Message: "User already exists",
-			})
-			w.WriteHeader(http.StatusBadRequest)
-			w.Write(pkg)
-		} else {
-			pkg, _ := json.Marshal(&response.Server{
-				Status:  response.StatusError,
-				Message: "couldn't create new user. Try again later",
-			})
-
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write(pkg)
-		}
-		return
-	}
-
-	signedToken, err := a.blackboxClient.IssueToken(
-		context.TODO(),
-		&blackbox.IssueTokenReq{
-			UserId: uuid,
-		},
-	)
-	if err != nil {
-		log.Println(
-			"couldnt't sign token for",
-			r.RemoteAddr,
-			". reason:",
-			err.Error(),
-		)
-		pkg, _ := json.Marshal(&response.Server{
-			Status:  response.StatusError,
-			Message: "couldn't issue user token",
-		})
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write(pkg)
-		return
-	}
-
-	authCookie := http.Cookie{
-		Name:     "auth",
-		Value:    "pass",
-		Path:     "/",
-		MaxAge:   3600,
-		Secure:   true,
-		HttpOnly: false,
-		SameSite: http.SameSiteLaxMode,
-	}
-
-	jwtCookie := http.Cookie{
-		Name:     "JWT",
-		Value:    signedToken.GetToken(),
-		Path:     "/",
-		MaxAge:   3600,
-		Secure:   true,
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	}
-
-	http.SetCookie(w, &authCookie)
-	http.SetCookie(w, &jwtCookie)
-	w.WriteHeader(http.StatusOK)
-
-	pkg, _ := json.Marshal(&response.Server{
-		Status:  response.StatusOK,
-		Message: "success",
-	})
-
-	w.Write(pkg)
-
-	log.Printf(
-		"successfully registered user `%s` from %s\n",
-		regReq.Email,
-		r.RemoteAddr,
-	)
-}
-
-type LoginRequest struct {
-	Email    string `json:"email"    validate:"required,email"`
-	Password string `json:"password" validate:"required,gte=8,lt=64"`
-}
-
-func (a *App) login(w http.ResponseWriter, r *http.Request) {
-	log.Println("got login request from", r.RemoteAddr)
-
-	d := json.NewDecoder(r.Body)
-	loginForm := new(LoginRequest)
-	if err := d.Decode(loginForm); err != nil {
-		log.Println(
-			"couldn't parse login request from",
-			r.RemoteAddr,
-			". reason:",
-			err.Error(),
-		)
-
-		pkg, _ := json.Marshal(&response.Server{
-			Status:  response.StatusError,
-			Message: "Couldn't parse login request",
-		})
-
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write(pkg)
-		return
-	}
-
-	if err := validate.Struct(loginForm); err != nil {
-		log.Println(
-			"invalid login form from",
-			r.RemoteAddr,
-			". reason:",
-			err.Error(),
-		)
-
-		pkg, _ := json.Marshal(&response.Server{
-			Status:  response.StatusValidationError,
-			Message: "invalid login form",
-		})
-
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write(pkg)
-		return
-	}
-
-	userId, err := a.users.Authenticate(loginForm.Email, loginForm.Password)
-	if err != nil {
-		log.Println(
-			"wrong email or password for login attempt from",
-			r.RemoteAddr,
-			". reason:",
-			err.Error(),
-		)
-
-		pkg, _ := json.Marshal(&response.Server{
-			Status:  response.StatusValidationError,
-			Message: "wrong email or password",
-		})
-
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write(pkg)
-		return
-	}
-
-	signedToken, err := a.blackboxClient.IssueToken(
-		context.TODO(),
-		&blackbox.IssueTokenReq{
-			UserId: userId,
-		},
-	)
-	if err != nil {
-		log.Println(
-			"couldnt't sign token on login attempt for",
-			r.RemoteAddr,
-			". reason:",
-			err.Error(),
-		)
-		pkg, _ := json.Marshal(&response.Server{
-			Status:  response.StatusError,
-			Message: "couldn't issue user token",
-		})
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write(pkg)
-		return
-	}
-
-	authCookie := http.Cookie{
-		Name:     "auth",
-		Value:    "pass",
-		Path:     "/",
-		MaxAge:   3600,
-		Secure:   true,
-		HttpOnly: false,
-		SameSite: http.SameSiteLaxMode,
-	}
-
-	jwtCookie := http.Cookie{
-		Name:     "JWT",
-		Value:    signedToken.GetToken(),
-		Path:     "/",
-		MaxAge:   3600,
-		Secure:   true,
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	}
-
-	http.SetCookie(w, &authCookie)
-	http.SetCookie(w, &jwtCookie)
-	w.WriteHeader(http.StatusOK)
-
-	pkg, _ := json.Marshal(&response.Server{
-		Status:  response.StatusOK,
-		Message: "success",
-	})
-
-	w.Write(pkg)
-
-	log.Println(
-		"successful login from",
-		r.RemoteAddr,
-	)
-}
 
 func main() {
 	conn, err := grpc.NewClient(
@@ -329,7 +26,7 @@ func main() {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		log.Fatalln("couldn't dial auth service. reason:", err)
+		log.Fatalln("couldn't dial blackbox service. error:", err)
 	}
 	defer conn.Close()
 
@@ -339,42 +36,90 @@ func main() {
 		users.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate users model. reason:", err)
+		log.Fatalln("couldn't instantiate users model. error:", err)
 	}
 	defer usersModel.Close()
 
-	app, err := NewApp(WithUsersDB(usersModel), WithBlackboxClient(c))
-	if err != nil {
-		panic(err)
+	conf := sarama.NewConfig()
+	conf.Producer.RequiredAcks = sarama.WaitForAll
+	conf.Producer.Flush.Frequency = 500 * time.Millisecond
+	conf.Producer.Return.Errors = false
+
+	if err = conf.Validate(); err != nil {
+		log.Fatalln("invalid kafka config:", err)
 	}
 
-	http.HandleFunc(
-		"OPTIONS /register",
+	p, err := sarama.NewAsyncProducer(
+		strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
+		conf,
+	)
+	if err != nil {
+		log.Fatalln("couldn't create kafka producer. error:", err)
+	}
+	defer p.Close()
+
+	authenticator, err := authenticator.New(
+		authenticator.WithUsersDB(usersModel),
+		authenticator.WithBlackboxClient(c),
+		authenticator.WithProducer(os.Getenv("KAFKA_USERS_TOPIC"), p),
+	)
+	if err != nil {
+		log.Fatalln("couldn't create authenticator. error:", err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(
+		"OPTIONS /signup",
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().
-				Add("Access-Control-Allow-Origin", "http://localhost:5173")
+				Add("Access-Control-Allow-Origin", "http://localhost:8001")
 			w.Header().Add("Access-Control-Allow-Credentials", "true")
 			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
 		}),
 	)
-
-	http.HandleFunc(
+	mux.HandleFunc(
 		"OPTIONS /login",
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().
-				Add("Access-Control-Allow-Origin", "http://localhost:5173")
+				Add("Access-Control-Allow-Origin", "http://localhost:8001")
 			w.Header().Add("Access-Control-Allow-Credentials", "true")
 			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
 		}),
 	)
-
-	http.HandleFunc(
-		"POST /register",
-		middleware.CorsHeaders(http.HandlerFunc(app.register)),
+	mux.HandleFunc(
+		"POST /signup",
+		middleware.CorsHeaders(http.HandlerFunc(authenticator.Register)),
 	)
-	http.HandleFunc(
+	mux.HandleFunc(
 		"POST /login",
-		middleware.CorsHeaders(http.HandlerFunc(app.login)),
+		middleware.CorsHeaders(http.HandlerFunc(authenticator.Login)),
 	)
-	http.ListenAndServe(":8080", nil)
+
+	server := http.Server{
+		Addr:         ":8080",
+		Handler:      mux,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  time.Minute,
+	}
+
+	ctx, cancel := signal.NotifyContext(
+		context.Background(),
+		syscall.SIGTERM,
+		syscall.SIGINT,
+	)
+	defer cancel()
+
+	go func() {
+		<-ctx.Done()
+		err = server.Shutdown(context.TODO())
+		if err != nil {
+			log.Printf("error occured on Shutdown():%v\n", err)
+		}
+	}()
+
+	err = server.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("error during shutdown:%v\n", err)
+	}
 }

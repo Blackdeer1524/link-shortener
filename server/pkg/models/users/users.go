@@ -3,9 +3,9 @@ package users
 import (
 	"context"
 	"errors"
+	"log"
+	"shortener/pkg/responses"
 
-	"github.com/jackc/pgconn"
-	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
@@ -46,41 +46,53 @@ func NewUsers(opts ...usersOption) (*Model, error) {
 	return u, nil
 }
 
-var ErrAlreadyExists = errors.New("user already exists")
-
 var ErrNotFound = errors.New("user not found")
 
 var ErrWrongCredentials = errors.New("wrong credentials")
 
-const hashCost = 12
+func (u *Model) CheckExistence(
+	ctx context.Context,
+	email string,
+) (bool, error) {
+	var res bool
+	err := u.pool.QueryRow(
+		ctx,
+		`SELECT EXISTS(SELECT 1 FROM Users WHERE Email = $1)`,
+		email,
+	).Scan(&res)
+	return res, err
+}
 
 func (u *Model) Insert(
 	ctx context.Context,
-	name string,
-	email string,
-	password string,
-) (string, error) {
-	hashedPwd, err := bcrypt.GenerateFromPassword([]byte(password), hashCost)
-	if err != nil {
-		return "", err
+	rr []*responses.Authenticator,
+) {
+	batch := pgx.Batch{}
+
+	for _, r := range rr {
+		batch.Queue(
+			`INSERT INTO Users(Id, Name, Email, HashedPassword) VALUES ($1, $2, $3, $4)`,
+			r.Id,
+			r.Name,
+			r.Email,
+			r.HashedPassword,
+		)
 	}
 
-	var uuid string
-	err = u.pool.QueryRow(
-		context.TODO(),
-		`INSERT INTO Users(Name,Email,HashedPassword) Values ($1, $2, $3) returning Id`,
-		name,
-		email,
-		hashedPwd,
-	).Scan(&uuid)
-	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
-			return "", ErrAlreadyExists
+	res := u.pool.SendBatch(ctx, &batch)
+	defer res.Close()
+
+	for _, urlInfo := range rr {
+		_, err := res.Exec()
+		if err != nil {
+			log.Printf(
+				"error occured during insert of %s (%s). error: %s\n",
+				urlInfo.Id,
+				urlInfo.Email,
+				err.Error(),
+			)
 		}
-		return "", err
 	}
-	return uuid, nil
 }
 
 func (u *Model) Authenticate(

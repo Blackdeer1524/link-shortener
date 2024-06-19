@@ -17,6 +17,7 @@ RUN go mod download && go mod verify
 
 COPY ./cmd/authenticator/authenticator.go ./cmd/authenticator/authenticator.go
 COPY ./pkg/ ./pkg/
+COPY ./internal/authenticator ./internal/authenticator
 
 COPY ./proto/blackbox/blackbox.proto ./proto/blackbox/blackbox.proto 
 RUN protoc --go_out=. --go_opt=paths=source_relative \

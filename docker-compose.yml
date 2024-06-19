@@ -1,4 +1,21 @@
 services:
+  frontend:
+    image: node:22-alpine3.19 
+    container_name: vite_docker
+    entrypoint: "/bin/sh -c"
+    command: |
+      "
+      npm install
+      npm run dev
+      "
+    ports:
+      - 8001:8000
+    working_dir: /usr/src/app
+    volumes:
+      - type: bind
+        source: ./client
+        target: /usr/src/app
+
   authenticator:
     container_name: authenticator
     ports:
@@ -8,8 +25,12 @@ services:
       dockerfile: ../dockerfiles/authenticator.dockerfile
     env_file: .env
     depends_on:
-      - db
-      - blackbox
+      db:
+        condition: service_healthy
+      blackbox:
+        condition: service_started
+      kafka:
+        condition: service_healthy
 
   shortener:
     container_name: shortener
@@ -21,14 +42,28 @@ services:
     env_file: .env
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
       kafka:
         condition: service_healthy
+
+  viewer:
+    container_name: viewer
+    ports:
+      - 8082:8080
+    build:
+      context: ./server
+      dockerfile: ../dockerfiles/viewer.dockerfile 
+    env_file: .env
+    depends_on:
+      blackbox:
+        condition: service_started
+      db:
+        condition: service_healthy 
 
   redirector:
     container_name: redirector
     ports:
-      - 8082:8080
+      - 8083:8080
     build:
       context: ./server
       dockerfile: ../dockerfiles/redirector.dockerfile 
@@ -37,10 +72,11 @@ services:
       redis:
         condition: service_started
       db:
-        condition: service_started
+        condition: service_healthy 
 
   blackbox:
     container_name: blackbox
+    env_file: .env
     build:
       context: ./server
       dockerfile: ../dockerfiles/blackbox.dockerfile
@@ -55,7 +91,7 @@ services:
       redis:
         condition: service_started
       db:
-        condition: service_started
+        condition: service_healthy 
       kafka:
         condition: service_healthy
 
@@ -66,12 +102,14 @@ services:
       dockerfile: ../dockerfiles/postgres.dockerfile
     image: postgres
     restart: always
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U server -d shortener"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    env_file: .env
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - db-volume:/var/lib/postgresql/data
 
   redis:
     container_name: redis
@@ -112,28 +150,28 @@ services:
       KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:19092","--list"]
-      interval: 2s
+      interval: 5s
       timeout: 10s
       retries: 5
     depends_on:
       - zoo
 
   init-kafka:
+    container_name: init-kafka
     image: confluentinc/cp-kafka:7.3.2
     depends_on:
-      kafka:
-        condition: service_healthy
+      storage:
+        condition: service_started
     entrypoint: [ '/bin/sh', '-c' ]
     env_file: ./.env
     command: |
       "
-      echo -e 'Creating kafka topics'
-      kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists --topic ${KAFKA_STORAGE_TOPIC} --partitions 4
-
+      kafka-topics --bootstrap-server kafka:19092 --alter --topic ${KAFKA_URLS_TOPIC} --partitions 4
+      kafka-topics --bootstrap-server kafka:19092 --alter --topic ${KAFKA_USERS_TOPIC} --partitions 4
       echo -e 'Successfully created the following topics:'
       kafka-topics --bootstrap-server kafka:19092 --list
       " 
 
 volumes:
-  db-data:
+  db-volume:
     

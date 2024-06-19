@@ -25,6 +25,15 @@ export default function AuthNavigation({ removeAuthCookie }) {
         >
           Log out
         </button>
+        <button
+          name="sign-up"
+          className="bg-blue-300 p-2 text-3xl"
+          onClick={() => {
+            navigate("/profile");
+          }}
+        >
+          Profile
+        </button>
       </div>
     </div>
   );

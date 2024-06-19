@@ -2,106 +2,26 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"shortener/internal/storage"
 	"shortener/pkg/models/urls"
-	"shortener/pkg/response"
+	"shortener/pkg/models/users"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/redis/go-redis/v9"
 )
 
-type groupHandler struct {
-	ctx  context.Context
-	urls *urls.Model // TODO: replace with interface
-}
-
-type groupHandlerOption func(*groupHandler) error
-
-func WithContext(ctx context.Context) groupHandlerOption {
-	return func(h *groupHandler) error {
-		h.ctx = ctx
-		return nil
-	}
-}
-
-func WithUrlsModel(l *urls.Model) groupHandlerOption {
-	return func(h *groupHandler) error {
-		h.urls = l
-		return nil
-	}
-}
-
-func NewGroupHandler(opts ...groupHandlerOption) (*groupHandler, error) {
-	g := new(groupHandler)
-	for _, opt := range opts {
-		if err := opt(g); err != nil {
-			return nil, err
-		}
-	}
-	if g.ctx == nil {
-		return nil, fmt.Errorf("no context provided")
-	}
-	return g, nil
-}
-
-func (h *groupHandler) Setup(sess sarama.ConsumerGroupSession) error {
-	log.Printf("%s is consuming %v\n", sess.MemberID(), sess.Claims())
-	return nil
-}
-
-func (h *groupHandler) Cleanup(sess sarama.ConsumerGroupSession) error {
-	log.Printf("%s is began cleanup\n", sess.MemberID())
-	sess.Commit()
-	return nil
-}
-
-func (h *groupHandler) ConsumeClaim(
-	sess sarama.ConsumerGroupSession,
-	claim sarama.ConsumerGroupClaim,
-) error {
-	ticker := time.NewTicker(time.Millisecond * 300)
-	defer ticker.Stop()
-
-	var messageBatch []*sarama.ConsumerMessage
-	for {
-		select {
-		case <-h.ctx.Done():
-			return nil
-		case mes, isOpen := <-claim.Messages():
-			if !isOpen {
-				return nil
-			}
-			messageBatch = append(messageBatch, mes)
-		case <-ticker.C:
-			var rr []*response.Shortener
-			for _, mes := range messageBatch {
-				var rsp response.Shortener
-				if err := json.Unmarshal(mes.Value, &rsp); err != nil {
-					log.Println("couldn't unmarshal message. reason:", err)
-					continue
-				}
-				rr = append(rr, &rsp)
-			}
-			h.urls.Insert(context.TODO(), rr)
-			for _, mes := range messageBatch {
-				sess.MarkMessage(mes, "")
-			}
-			messageBatch = messageBatch[:0]
-		}
-	}
-}
-
 func main() {
 	conf := sarama.NewConfig()
 	conf.Consumer.Offsets.AutoCommit.Enable = false
 	conf.Consumer.Offsets.Initial = sarama.OffsetOldest
+	if err := conf.Validate(); err != nil {
+		log.Fatalln("invalid kafka config:", err)
+	}
 
 	group, err := sarama.NewConsumerGroup(
 		strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
@@ -109,7 +29,7 @@ func main() {
 		conf,
 	)
 	if err != nil {
-		log.Fatalln("couldn't start consuming kafka topic. reason:", err)
+		log.Fatalln("couldn't start consuming kafka topic. error:", err)
 	}
 	defer group.Close()
 
@@ -127,21 +47,42 @@ func main() {
 		urls.WithRedis(rdb),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate urls model. reason:", err)
+		log.Fatalln("couldn't instantiate urls model. error:", err)
 	}
 	defer u.Close()
 
-	h, err := NewGroupHandler(WithContext(ctx), WithUrlsModel(u))
+	users, err := users.NewUsers(
+		users.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
+	)
 	if err != nil {
-		log.Fatalln("couldn't create consumer group's handler. reason:", err)
+		log.Fatalln("couldn't instantiate users model. error:", err)
+	}
+	defer users.Close()
+
+	h, err := storage.New(
+		storage.WithContext(ctx),
+		storage.WithUrlsTopic(os.Getenv("KAFKA_URLS_TOPIC")),
+		storage.WithUrlsModel(u),
+		storage.WithUsersTopic(os.Getenv("KAFKA_USERS_TOPIC")),
+		storage.WithUsersModel(users),
+	)
+	if err != nil {
+		log.Fatalln("couldn't create consumer group's handler. error:", err)
 	}
 
 	go func() {
 		<-ctx.Done()
-		group.Close()
+		if err = group.Close(); err != nil {
+			log.Printf("error occured on group Close():%v\n", err)
+		}
 	}()
 
-	if err := group.Consume(ctx, []string{os.Getenv("KAFKA_STORAGE_TOPIC")}, h); err != nil {
+	err = group.Consume(
+		ctx,
+		[]string{os.Getenv("KAFKA_URLS_TOPIC"), os.Getenv("KAFKA_USERS_TOPIC")},
+		h,
+	)
+	if err != nil {
 		log.Fatalln("topics consumption error:", err)
 	}
 }

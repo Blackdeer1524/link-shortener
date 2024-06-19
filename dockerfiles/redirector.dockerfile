@@ -7,6 +7,7 @@ RUN go mod download && go mod verify
 
 COPY ./cmd/redirector/redirector.go ./cmd/redirector/redirector.go
 COPY ./pkg/ ./pkg/
+COPY ./internal/redirector ./internal/redirector
 
 ENV CGO_ENABLED=0
 ENV GOCACHE=/root/.cache/go-build 

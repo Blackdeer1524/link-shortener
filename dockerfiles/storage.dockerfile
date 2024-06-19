@@ -17,6 +17,7 @@ RUN go mod download && go mod verify
 
 COPY ./cmd/storage/storage.go ./cmd/storage/storage.go
 COPY ./pkg/ ./pkg/
+COPY ./internal/storage ./internal/storage
 
 COPY ./proto/blackbox/blackbox.proto ./proto/blackbox/blackbox.proto 
 RUN protoc --go_out=. --go_opt=paths=source_relative \

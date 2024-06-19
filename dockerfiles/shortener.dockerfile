@@ -17,6 +17,7 @@ RUN go mod download && go mod verify
 
 COPY ./cmd/shortener/shortener.go ./cmd/shortener/shortener.go
 COPY ./pkg/ ./pkg/
+COPY ./internal/shortener ./internal/shortener
 
 COPY ./proto/blackbox/blackbox.proto ./proto/blackbox/blackbox.proto 
 RUN protoc --go_out=. --go_opt=paths=source_relative \

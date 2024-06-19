@@ -1,15 +1,10 @@
-package response
+package responses
 
-import "time"
-
-const (
-	StatusOK = iota
-	StatusError
-	StatusValidationError
+import (
+	"time"
 )
 
 type Server struct {
-	Status  int    `json:"status"`
 	Message string `json:"message"`
 }
 
@@ -18,4 +13,11 @@ type Shortener struct {
 	ShortUrl       string    `json:"short_url"`
 	LongUrl        string    `json:"long_url"`
 	ExpirationDate time.Time `json:"expiration_date"`
+}
+
+type Authenticator struct {
+	Id             string `json:"id"`
+	Name           string `json:"name"`
+	Email          string `json:"email"`
+	HashedPassword string `json:"hashed_password"`
 }
