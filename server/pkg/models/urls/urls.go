@@ -1,4 +1,4 @@
-package models
+package urls
 
 import (
 	"context"
@@ -13,15 +13,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type Urls struct {
+type Model struct {
 	pool *pgxpool.Pool
 	rdb  *redis.Client
 }
 
-type urlsOption func(u *Urls) error
+type urlsOption func(u *Model) error
 
 func WithPool(ctx context.Context, dsn string) urlsOption {
-	return func(l *Urls) error {
+	return func(l *Model) error {
 		pool, err := pgxpool.New(ctx, dsn)
 		if err != nil {
 			return err
@@ -37,14 +37,14 @@ func WithPool(ctx context.Context, dsn string) urlsOption {
 }
 
 func WithRedis(rdb *redis.Client) urlsOption {
-	return func(u *Urls) error {
+	return func(u *Model) error {
 		u.rdb = rdb
 		return nil
 	}
 }
 
-func NewUrls(opts ...urlsOption) (*Urls, error) {
-	u := new(Urls)
+func New(opts ...urlsOption) (*Model, error) {
+	u := new(Model)
 	for _, opt := range opts {
 		if err := opt(u); err != nil {
 			return nil, err
@@ -60,7 +60,7 @@ func NewUrls(opts ...urlsOption) (*Urls, error) {
 	return u, nil
 }
 
-func (u *Urls) CheckExistence(
+func (u *Model) CheckExistence(
 	ctx context.Context,
 	shortUrl string,
 ) (bool, error) {
@@ -81,7 +81,7 @@ func (u *Urls) CheckExistence(
 	return res, err
 }
 
-func (u *Urls) Insert(ctx context.Context, rr []*response.Shortener) {
+func (u *Model) Insert(ctx context.Context, rr []*response.Shortener) {
 	batch := pgx.Batch{}
 
 	for _, urlInfo := range rr {

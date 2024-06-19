@@ -1,4 +1,4 @@
-package models
+package users
 
 import (
 	"context"
@@ -10,15 +10,47 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type Users struct {
+type Model struct {
 	pool *pgxpool.Pool
 }
+
+type usersOption func (u *Model) error
+
+func WithPool(ctx context.Context, dsn string) usersOption {
+	return func(u *Model) error {
+		pool, err := pgxpool.New(ctx, dsn)
+		if err != nil {
+			return err
+		}
+
+		if err := pool.Ping(ctx); err != nil {
+			return err
+		}
+
+		u.pool = pool
+		return nil
+	}
+}
+
+func NewUsers(opts ...usersOption) (*Model, error) {
+	u := new(Model)
+	for _, opt := range opts {
+		if err := opt(u); err != nil {
+			return nil, err
+		}
+	}
+	if u.pool == nil {
+		return nil, errors.New("no connection pool provided")
+	}
+	return u, nil
+}
+
 
 var ErrAlreadyExists = errors.New("User already exists")
 
 const hashCost = 12
 
-func (u *Users) Insert(
+func (u *Model) Insert(
 	ctx context.Context,
 	name string,
 	email string,
@@ -47,6 +79,6 @@ func (u *Users) Insert(
 	return uuid, nil
 }
 
-func (u *Users) Authenticate(email string, password string) (string, error) {
+func (u *Model) Authenticate(email string, password string) (string, error) {
 	return "some uuid", nil
 }

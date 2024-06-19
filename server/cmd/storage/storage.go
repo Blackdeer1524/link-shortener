@@ -7,18 +7,19 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"shortener/pkg/models"
+	"shortener/pkg/models/urls"
 	"shortener/pkg/response"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/redis/go-redis/v9"
 )
 
 type groupHandler struct {
-	ctx   context.Context
-	urls *models.Urls // TODO: replace with interface
+	ctx  context.Context
+	urls *urls.Model // TODO: replace with interface
 }
 
 type groupHandlerOption func(*groupHandler) error
@@ -30,7 +31,7 @@ func WithContext(ctx context.Context) groupHandlerOption {
 	}
 }
 
-func WithUrlsModel(l *models.Urls) groupHandlerOption {
+func WithUrlsModel(l *urls.Model) groupHandlerOption {
 	return func(h *groupHandler) error {
 		h.urls = l
 		return nil
@@ -119,14 +120,17 @@ func main() {
 	)
 	defer cancel()
 
-	l, err := models.NewUrls(
-		models.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
+	rdb := redis.NewClient(&redis.Options{Addr: "redis:6379"})
+
+	u, err := urls.New(
+		urls.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
+		urls.WithRedis(rdb),
 	)
 	if err != nil {
 		log.Fatalln("couldn't instantiate urls model. reason:", err)
 	}
 
-	h, err := NewGroupHandler(WithContext(ctx), WithUrlsModel(l))
+	h, err := NewGroupHandler(WithContext(ctx), WithUrlsModel(u))
 	if err != nil {
 		log.Fatalln("couldn't create consumer group's handler. reason:", err)
 	}

@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"os"
 	"shortener/pkg/middleware"
-	"shortener/pkg/models"
+	"shortener/pkg/models/urls"
 	"shortener/pkg/response"
 	"shortener/proto/blackbox"
 	"strings"
@@ -17,6 +17,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/go-playground/validator/v10"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -33,7 +34,7 @@ type authShortenReq struct {
 }
 
 type shortener struct {
-	urls           *models.Urls
+	urls           *urls.Model
 	blackboxClient blackbox.BlackboxServiceClient
 	redirectorHost string
 
@@ -50,7 +51,7 @@ func WithBlackboxClient(c blackbox.BlackboxServiceClient) shortenerOption {
 	}
 }
 
-func WithUrlsModel(u *models.Urls) shortenerOption {
+func WithUrlsModel(u *urls.Model) shortenerOption {
 	return func(s *shortener) error {
 		s.urls = u
 		return nil
@@ -203,7 +204,7 @@ func (s *shortener) shortenUrl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Println(
+	log.Printf(
 		"got valid tokin from %s with user id %s\n ",
 		r.RemoteAddr,
 		tokenInfo.GetUserId(),
@@ -333,8 +334,10 @@ func main() {
 	}
 	defer conn.Close()
 
-	u, err := models.NewUrls(
-		models.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
+	rdb := redis.NewClient(&redis.Options{Addr: "redis:6379"})
+	u, err := urls.New(
+		urls.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
+		urls.WithRedis(rdb),
 	)
 	if err != nil {
 		log.Fatalln("couldn't instantiate urls model. reason:", err)
@@ -362,6 +365,8 @@ func main() {
 	if err != nil {
 		log.Fatalln("couldn't instantiate shortener. reason:", err)
 	}
+
+	log.Println("started listening")
 
 	http.HandleFunc(
 		"OPTIONS /create_short_url",

@@ -4,28 +4,52 @@ services:
     ports:
       - 8080:8080
     build:
-      dockerfile: ./dockerfiles/authenticator.dockerfile
-      context: .
+      context: ./server
+      dockerfile: ../dockerfiles/authenticator.dockerfile
+    env_file: .env
+    depends_on:
+      - db
+      - blackbox
 
   shortener:
     container_name: shortener
     ports:
       - 8081:8080
     build:
-      dockerfile: ./dockerfiles/shortener.dockerfile
-      context: .
+      context: ./server
+      dockerfile: ../dockerfiles/shortener.dockerfile
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_started
+      kafka:
+        condition: service_healthy
 
   blackbox:
     container_name: blackbox
     build:
-      dockerfile: ./dockerfiles/blackbox.dockerfile
-      context: .
+      context: ./server
+      dockerfile: ../dockerfiles/blackbox.dockerfile
+
+  storage:
+    container_name: storage
+    build:
+      context: ./server
+      dockerfile: ../dockerfiles/storage.dockerfile
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_started
+      db:
+        condition: service_started
+      kafka:
+        condition: service_healthy
 
   db:
     container_name: db
     build:
-      dockerfile: ./dockerfiles/postgres.dockerfile
-      context: .
+      context: ./server
+      dockerfile: ../dockerfiles/postgres.dockerfile
     image: postgres
     restart: always
     environment:
@@ -34,6 +58,10 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
     volumes:
       - db-data:/var/lib/postgresql/data
+
+  redis:
+    container_name: redis
+    image: redis:latest
 
   zoo:
     image: confluentinc/cp-zookeeper:7.3.2
@@ -68,26 +96,29 @@ services:
       KAFKA_JMX_HOSTNAME: ${DOCKER_HOST_IP:-127.0.0.1}
       KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer
       KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: "true"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:19092","--list"]
+      interval: 2s
+      timeout: 10s
+      retries: 5
     depends_on:
       - zoo
 
   init-kafka:
     image: confluentinc/cp-kafka:7.3.2
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     entrypoint: [ '/bin/sh', '-c' ]
+    env_file: ./.env
     command: |
       "
       echo -e 'Creating kafka topics'
-      kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists --topic messages --partitions 6
+      kafka-topics --bootstrap-server kafka:19092 --create --if-not-exists --topic ${KAFKA_STORAGE_TOPIC} --partitions 4
 
       echo -e 'Successfully created the following topics:'
       kafka-topics --bootstrap-server kafka:19092 --list
       " 
-
-  redis:
-    container_name: redis
-    image: redis:latest
 
 volumes:
   db-data:

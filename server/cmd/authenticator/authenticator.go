@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"shortener/pkg/middleware"
-	"shortener/pkg/models"
+	"shortener/pkg/models/users"
 	"shortener/pkg/response"
 	"shortener/proto/blackbox"
 
@@ -18,13 +19,13 @@ import (
 )
 
 type App struct {
-	users          *models.Users // TODO: replace with an interface
+	users          *users.Model // TODO: replace with an interface
 	blackboxClient blackbox.BlackboxServiceClient
 }
 
 type AppOption func(*App) error
 
-func WithUsersDB(users *models.Users) AppOption {
+func WithUsersDB(users *users.Model) AppOption {
 	return func(a *App) error {
 		a.users = users
 		return nil
@@ -119,7 +120,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 			". reason:",
 			err.Error(),
 		)
-		if errors.Is(err, models.ErrAlreadyExists) {
+		if errors.Is(err, users.ErrAlreadyExists) {
 			pkg, _ := json.Marshal(&response.Server{
 				Status:  response.StatusValidationError,
 				Message: "User already exists",
@@ -333,7 +334,14 @@ func main() {
 	defer conn.Close()
 
 	c := blackbox.NewBlackboxServiceClient(conn)
-	usersModel := &models.Users{}
+
+	usersModel, err := users.NewUsers(
+		users.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
+	)
+	if err != nil {
+		log.Fatalln("couldn't instantiate users model. reason:", err)
+	}
+
 	app, err := NewApp(WithUsersDB(usersModel), WithBlackboxClient(c))
 	if err != nil {
 		panic(err)
