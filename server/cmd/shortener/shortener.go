@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,55 +16,68 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	log := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
+		With().
+		Timestamp().
+		Logger()
+
 	conn, err := grpc.NewClient(
 		"blackbox:8080",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		log.Fatalln("couldn't dial auth service. error:", err)
+		log.Fatal().Err(err).Msg("couldn't dial auth service")
 	}
+	log.Info().Msg("successfully instantiated blackbox client")
 	defer conn.Close()
 
 	rdb := redis.NewClient(&redis.Options{Addr: "redis:6379"})
+
 	u, err := urls.New(
 		urls.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
 		urls.WithRedis(rdb),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate urls model. error:", err)
+		log.Fatal().Err(err).Msg("couldn't instantiate urls model")
 	}
 	defer u.Close()
+	log.Info().Msg("successfully instantiated user model")
 
 	conf := sarama.NewConfig()
 	conf.Producer.RequiredAcks = sarama.WaitForAll
 	conf.Producer.Flush.Frequency = 500 * time.Millisecond
 	conf.Producer.Return.Errors = false
 	if err = conf.Validate(); err != nil {
-		log.Fatalln("invalid kafka config:", err)
+		log.Fatal().Err(err).Msg("invalid kafka config")
 	}
-
 	p, err := sarama.NewAsyncProducer(
 		strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
 		conf,
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate kafka producer. error:", err)
+		log.Fatal().Err(err).Msg("couldn't instantiate kafka producer")
 	}
 	defer p.Close()
+	log.Info().Msg("successfully instantiated topic producer")
 
+	log.Info().Msg("instantiating shortener")
 	s, err := shortener.New(
+		shortener.WithUrlsModel(u),
 		shortener.WithBlackboxClient(blackbox.NewBlackboxServiceClient(conn)),
 		shortener.WithKafkaProducer(p, os.Getenv("KAFKA_URLS_TOPIC")),
 		shortener.WithRedirectorHost(os.Getenv("REDIRECTOR_HOST")),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate shortener. error:", err)
+		log.Fatal().Err(err).Msg("couldn't instantiate shortener")
 	}
+	log.Info().Msg("successfully instantiated shortener")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(
@@ -77,9 +89,11 @@ func main() {
 			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
 		}),
 	)
+
+	m := middleware.RequestTracing(&log)
 	mux.Handle(
 		"POST /create_short_url",
-		middleware.CorsHeaders(http.HandlerFunc(s.ShortenUrl)),
+		m.Append(middleware.CorsHeaders).ThenFunc(s.ShortenUrl),
 	)
 
 	server := http.Server{
@@ -101,12 +115,13 @@ func main() {
 		<-ctx.Done()
 		err = server.Shutdown(context.TODO())
 		if err != nil {
-			log.Printf("error occured on Shutdown():%v\n", err)
+			log.Error().Err(err).Msg("error occured on Shutdown()")
 		}
 	}()
 
+	log.Info().Msg("listening for connections")
 	err = server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatalf("error during shutdown:%v\n", err)
+		log.Fatal().Err(err).Msg("error during shutdown")
 	}
 }

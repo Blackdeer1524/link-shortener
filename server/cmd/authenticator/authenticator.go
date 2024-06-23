@@ -15,9 +15,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
-	"github.com/justinas/alice"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/hlog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -75,28 +73,12 @@ func main() {
 		log.Fatal().Err(err).Msg("couldn't instantiate authenticator")
 	}
 
-	stdMiddleware := alice.New()
-	stdMiddleware = stdMiddleware.Append(
-		hlog.NewHandler(log),
-		hlog.AccessHandler(
-			func(r *http.Request, status, size int, duration time.Duration) {
-				hlog.FromRequest(r).Info().Str("method", r.Method).
-					Int("status", status).
-					Dur("duration", duration).
-					Msg("")
-			},
-		),
-		hlog.RemoteAddrHandler("ip"),
-		hlog.URLHandler("url"),
-		hlog.RequestHandler("url_and_method"),
-		hlog.RequestIDHandler("request_id", "Request-Id"),
-		hlog.UserAgentHandler("user_agent"),
-	)
+	stdMiddleware := middleware.RequestTracing(&log)
 
 	mux := http.NewServeMux()
 	mux.Handle(
 		"OPTIONS /signup",
-		stdMiddleware.ThenFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().
 				Add("Access-Control-Allow-Origin", "http://localhost:8001")
 			w.Header().Add("Access-Control-Allow-Credentials", "true")
@@ -116,9 +98,7 @@ func main() {
 	)
 	mux.Handle(
 		"POST /signup",
-		stdMiddleware.
-			Append(middleware.CorsHeaders).
-			ThenFunc(a.Register),
+		stdMiddleware.Append(middleware.CorsHeaders).ThenFunc(a.Register),
 	)
 	mux.Handle(
 		"POST /login",

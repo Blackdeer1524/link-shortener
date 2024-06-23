@@ -42,6 +42,7 @@ func New(opts ...redirectorOption) (*Redirector, error) {
 
 func (re *Redirector) Redirect(w http.ResponseWriter, r *http.Request) {
 	log := hlog.FromRequest(r)
+	log.Info().Msg("got redirection request")
 
 	shortUrl := strings.TrimLeft(r.URL.Path, "/")
 	if len(shortUrl) != 5 {
@@ -49,7 +50,7 @@ func (re *Redirector) Redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Info().Msg("trying to get long url from the short one")
+	log.Info().Msg("querying database for long url")
 	longUrl, err := re.urls.GetLongUrl(context.TODO(), shortUrl)
 	if err == nil {
 		http.Redirect(w, r, longUrl, http.StatusMovedPermanently)

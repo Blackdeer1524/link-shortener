@@ -7,14 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"shortener/internal/redirector"
+	"shortener/pkg/middleware"
 	"shortener/pkg/models/urls"
 	"syscall"
 	"time"
 
-	"github.com/justinas/alice"
 	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/hlog"
 )
 
 func main() {
@@ -39,20 +38,7 @@ func main() {
 		log.Fatal().Err(err).Msg("couldn't instantiate redirector")
 	}
 
-	c := alice.New(
-		hlog.NewHandler(log),
-		hlog.URLHandler("url"),
-		hlog.RequestIDHandler("request_id", "Request-Id"),
-		hlog.RemoteAddrHandler("ip"),
-		hlog.AccessHandler(
-			func(r *http.Request, status, size int, duration time.Duration) {
-				hlog.FromRequest(r).Info().
-					Int("status", status).
-					Dur("duration", duration).
-					Msg("")
-			},
-		),
-	)
+	c := middleware.RequestTracing(&log)
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /", c.ThenFunc(re.Redirect))

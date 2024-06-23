@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
@@ -21,25 +21,32 @@ import (
 )
 
 func main() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	log := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
+		With().
+		Timestamp().
+		Logger()
+
 	conn, err := grpc.NewClient(
 		"blackbox:8080",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		log.Fatalln("couldn't dial blackbox service. error:", err)
+		log.Fatal().Err(err).Msg("couldn't dial blackbox service")
 	}
 	defer conn.Close()
 	c := pbblackbox.NewBlackboxServiceClient(conn)
+	log.Info().Msg("instantiated blackbox client")
 
 	rdb := redis.NewClient(&redis.Options{Addr: "redis:6379"})
-
 	u, err := urls.New(
 		urls.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
 		urls.WithRedis(rdb),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate urls model. error:", err)
+		log.Fatal().Err(err).Msg("couldn't instantiate urls model")
 	}
+	log.Info().Msg("instantiated urls model")
 
 	v, err := viewer.New(
 		viewer.WithUrls(u),
@@ -47,9 +54,11 @@ func main() {
 		viewer.WithRedirectorHost(os.Getenv("REDIRECTOR_HOST")),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate urls model. error:", err)
+		log.Fatal().Err(err).Msg("couldn't instantiate urls model")
 	}
+	log.Info().Msg("instantiated viewer service")
 
+	m := middleware.RequestTracing(&log)
 	mux := http.NewServeMux()
 	mux.HandleFunc(
 		"OPTIONS /history",
@@ -61,7 +70,7 @@ func main() {
 	)
 	mux.Handle(
 		"GET /history",
-		middleware.CorsHeaders(http.HandlerFunc(v.HandleHistory)),
+		m.Append(middleware.CorsHeaders).ThenFunc(v.HandleHistory),
 	)
 
 	server := http.Server{
@@ -83,12 +92,13 @@ func main() {
 		<-ctx.Done()
 		err = server.Shutdown(context.TODO())
 		if err != nil {
-			log.Printf("error occured on Shutdown():%v\n", err)
+			log.Err(err).Msg("error occured on Shutdown()")
 		}
 	}()
 
+	log.Info().Msg("started listening")
 	err = server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatalf("error during shutdown:%v\n", err)
+		log.Fatal().Err(err).Msg("error during shutdown")
 	}
 }

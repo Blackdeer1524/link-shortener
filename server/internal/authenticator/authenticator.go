@@ -97,6 +97,7 @@ const hashCost = 12
 func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 	log := hlog.FromRequest(r)
 
+	log.Info().Msg("got signing up request")
 	log.Info().Msg("decoding request body")
 	d := json.NewDecoder(r.Body)
 	var regForm registerRequest
@@ -275,6 +276,7 @@ func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
 	log := hlog.FromRequest(r)
 
+	log.Info().Msg("got login request")
 	log.Info().Msg("parsing request body")
 	d := json.NewDecoder(r.Body)
 	var loginForm loginRequest
@@ -315,11 +317,11 @@ func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
 		loginForm.Password,
 	)
 	if err != nil {
-		log.Error().
-			Err(err).
-			Msg("wrong email or password for login attempt from")
-
 		if errors.Is(err, users.ErrWrongCredentials) {
+			log.Error().
+				Err(err).
+				Msg("wrong credentials")
+
 			pkg, _ := json.Marshal(&responses.Server{
 				Message: "wrong email or password",
 			})
@@ -327,6 +329,10 @@ func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusForbidden)
 			w.Write(pkg)
 		} else {
+			log.Error().
+				Err(err).
+				Msg("couldn't check credentials")
+
 			pkg, _ := json.Marshal(&responses.Server{
 				Message: "couldn't check credentials",
 			})
@@ -334,6 +340,7 @@ func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write(pkg)
 		}
+
 		return
 	}
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"shortener/pkg/responses"
 	"shortener/proto/blackbox"
@@ -92,20 +91,22 @@ func (s *Shortener) ShortenUrl(w http.ResponseWriter, r *http.Request) {
 
 	JWTCookie, err := r.Cookie("JWT")
 	gotJWT := true
-	switch {
-	case errors.Is(err, http.ErrNoCookie):
-		log.Info().Msg("no JWT cookie found")
-		gotJWT = false
-	default:
-		log.Error().
-			Err(err).
-			Msg("caught error during JWT cookie processing")
-		res, _ := json.Marshal(&responses.Server{
-			Message: "caught error during JWT cookie processing",
-		})
-		w.WriteHeader(http.StatusUnprocessableEntity)
-		w.Write(res)
-		return
+	if err != nil {
+		switch {
+		case errors.Is(err, http.ErrNoCookie):
+			log.Info().Msg("no JWT cookie found")
+			gotJWT = false
+		default:
+			log.Error().
+				Err(err).
+				Msg("caught error during JWT cookie processing")
+			res, _ := json.Marshal(&responses.Server{
+				Message: "caught error during JWT cookie processing",
+			})
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			w.Write(res)
+			return
+		}
 	}
 
 	if !gotJWT {
@@ -230,8 +231,6 @@ func (s *Shortener) shortenAuth(
 
 	w.WriteHeader(http.StatusOK)
 	w.Write(res)
-
-	log.Info().Msg("successfully handled shortening request")
 }
 
 func (s *Shortener) shortenNoAuth(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +287,7 @@ func (s *Shortener) shortenNoAuth(w http.ResponseWriter, r *http.Request) {
 		ExpirationDate: time.Now().Add(time.Hour * 24 * 30),
 	})
 
-	log.Info().Msg("sending short url to storage service with")
+	log.Info().Msg("sending short url to storage service")
 	s.producer.Input() <- &sarama.ProducerMessage{
 		Topic: s.topic,
 		Value: sarama.ByteEncoder(m),

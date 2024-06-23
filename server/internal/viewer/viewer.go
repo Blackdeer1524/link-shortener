@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 	"shortener/pkg/domain"
 	"shortener/pkg/responses"
 	"shortener/proto/blackbox"
 
+	"github.com/rs/zerolog/hlog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -70,6 +70,9 @@ func New(opts ...viewerOption) (*Viewer, error) {
 }
 
 func (v *Viewer) HandleHistory(w http.ResponseWriter, r *http.Request) {
+	log := hlog.FromRequest(r)
+
+	log.Info().Msg("got new history request")
 	JWTCookie, err := r.Cookie("JWT")
 	gotJWT := true
 	if err != nil {
@@ -77,10 +80,9 @@ func (v *Viewer) HandleHistory(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, http.ErrNoCookie):
 			gotJWT = false
 		default:
-			log.Println(
-				"caught error during JWT cookie processing. error:",
-				err,
-			)
+			log.Error().
+				Err(err).
+				Msg("caught error during JWT cookie processing")
 			res, _ := json.Marshal(&responses.Server{
 				Message: "caught error during JWT cookie processing",
 			})
@@ -91,6 +93,7 @@ func (v *Viewer) HandleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !gotJWT {
+		log.Info().Msg("unauthenticated user tried to get shortening history")
 		res, _ := json.Marshal(&responses.Server{
 			Message: "no JWT cookie provided",
 		})
@@ -99,6 +102,7 @@ func (v *Viewer) HandleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Info().Msg("validating JWT")
 	tokenInfo, err := v.blackboxClient.ValidateToken(
 		context.TODO(),
 		&blackbox.ValidateTokenReq{
@@ -106,11 +110,7 @@ func (v *Viewer) HandleHistory(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		log.Printf(
-			"couldn't validate jwt from %s. error: %s\n",
-			r.RemoteAddr,
-			err.Error(),
-		)
+		log.Error().Err(err).Msg("couldn't validate jwt")
 		s, ok := status.FromError(err)
 		if !ok {
 			res, _ := json.Marshal(&responses.Server{
@@ -146,9 +146,10 @@ func (v *Viewer) HandleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Info().Msg("getting shortening history")
 	history, err := v.urls.History(context.TODO(), tokenInfo.GetUserId())
 	if err != nil {
-		log.Printf("couldn't get history. error:%v", err)
+		log.Error().Err(err).Msg("couldn't get history")
 
 		res, _ := json.Marshal(&responses.Server{
 			Message: "couldn't get history",
