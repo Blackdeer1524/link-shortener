@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/rs/zerolog/hlog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -87,26 +88,24 @@ func New(opts ...shortenerOption) (*Shortener, error) {
 }
 
 func (s *Shortener) ShortenUrl(w http.ResponseWriter, r *http.Request) {
-	log.Println("got url shortening request from", r.RemoteAddr)
+	log := hlog.FromRequest(r)
 
 	JWTCookie, err := r.Cookie("JWT")
 	gotJWT := true
-	if err != nil {
-		switch {
-		case errors.Is(err, http.ErrNoCookie):
-			gotJWT = false
-		default:
-			log.Println(
-				"caught error during JWT cookie processing. error:",
-				err,
-			)
-			res, _ := json.Marshal(&responses.Server{
-				Message: "caught error during JWT cookie processing",
-			})
-			w.WriteHeader(http.StatusUnprocessableEntity)
-			w.Write(res)
-			return
-		}
+	switch {
+	case errors.Is(err, http.ErrNoCookie):
+		log.Info().Msg("no JWT cookie found")
+		gotJWT = false
+	default:
+		log.Error().
+			Err(err).
+			Msg("caught error during JWT cookie processing")
+		res, _ := json.Marshal(&responses.Server{
+			Message: "caught error during JWT cookie processing",
+		})
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write(res)
+		return
 	}
 
 	if !gotJWT {
@@ -114,10 +113,7 @@ func (s *Shortener) ShortenUrl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf(
-		"got shortening request with JWT token from %s. checking token validity.\n",
-		r.RemoteAddr,
-	)
+	log.Info().Msg("got request with JWT. validating")
 	tokenInfo, err := s.blackboxClient.ValidateToken(
 		context.TODO(),
 		&blackbox.ValidateTokenReq{
@@ -125,11 +121,7 @@ func (s *Shortener) ShortenUrl(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		log.Printf(
-			"couldn't validate jwt from %s. error: %s\n",
-			r.RemoteAddr,
-			err.Error(),
-		)
+		log.Error().Err(err).Msg("couldn't validate jwt")
 		s, ok := status.FromError(err)
 		if !ok {
 			res, _ := json.Marshal(&responses.Server{
@@ -165,40 +157,33 @@ func (s *Shortener) ShortenUrl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf(
-		"got valid tokin from %s with user id %s\n ",
-		r.RemoteAddr,
-		tokenInfo.GetUserId(),
-	)
-
+	log.Info().Str("user_id", tokenInfo.GetUserId()).Msg("got valid token")
 	s.shortenAuth(tokenInfo.GetUserId(), w, r)
 }
 
 func (s *Shortener) shortenAuth(
-	from string,
+	userId string,
 	w http.ResponseWriter,
 	r *http.Request,
 ) {
+	log := hlog.FromRequest(r).With().Str("user_id", userId).Logger()
+
+	log.Info().Msg("decoding request body")
 	d := json.NewDecoder(r.Body)
 	var form authShortenReq
 	if err := d.Decode(&form); err != nil {
-		log.Println("couldn't decode auth shortening req. error:", err)
+		log.Error().Err(err).Msg("couldn't decode body of shortening request")
 		res, _ := json.Marshal(&responses.Server{
-			Message: "Bad shortening form",
+			Message: "coulnd't process shortening form",
 		})
-
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		w.Write(res)
 		return
 	}
 
+	log.Info().Msg("validating shortening form")
 	if err := validate.Struct(&form); err != nil {
-		log.Println(
-			"invalid url shortening form (auth) from",
-			r.RemoteAddr,
-			". error:",
-			err.Error(),
-		)
+		log.Error().Err(err).Msg("invalid shortening form")
 
 		pkg, _ := json.Marshal(&responses.Server{
 			Message: "invalid shortening form",
@@ -208,13 +193,16 @@ func (s *Shortener) shortenAuth(
 		w.Write(pkg)
 		return
 	}
+	log.Info().Msg("got valid shortening form")
 
 	var shortUrl string
 	for {
 		shortUrl = generateShortUrl(5)
 		exists, err := s.urls.CheckExistence(context.TODO(), shortUrl)
 		if err != nil {
-			log.Println("couldn't check existence of short url. error:", err)
+			log.Error().
+				Err(err).
+				Msg("couldn't check existence of short url in database. will reattempt database request")
 			continue
 		}
 		if !exists {
@@ -223,13 +211,14 @@ func (s *Shortener) shortenAuth(
 	}
 
 	m, _ := json.Marshal(&responses.Shortener{
-		From:     from,
+		From:     userId,
 		ShortUrl: shortUrl,
 		LongUrl:  form.Url,
 		ExpirationDate: time.Now().
 			Add(time.Hour * 24 * time.Duration(form.Expiration)),
 	})
 
+	log.Info().Msg("sending short url to storage service")
 	s.producer.Input() <- &sarama.ProducerMessage{
 		Topic: s.topic,
 		Value: sarama.ByteEncoder(m),
@@ -241,29 +230,29 @@ func (s *Shortener) shortenAuth(
 
 	w.WriteHeader(http.StatusOK)
 	w.Write(res)
+
+	log.Info().Msg("successfully handled shortening request")
 }
 
 func (s *Shortener) shortenNoAuth(w http.ResponseWriter, r *http.Request) {
+	log := hlog.FromRequest(r)
+
+	log.Info().Msg("decoding request body")
 	d := json.NewDecoder(r.Body)
 	var form noAuthShortenReq
 	if err := d.Decode(&form); err != nil {
-		log.Println("couldn't decode no auth shortening req. error:", err)
+		log.Error().Err(err).Msg("couldn't decode body of shortening request")
 		res, _ := json.Marshal(&responses.Server{
-			Message: "Bad shortening form",
+			Message: "coulnd't process shortening form",
 		})
-
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		w.Write(res)
 		return
 	}
 
+	log.Info().Msg("validating shortening form")
 	if err := validate.Struct(&form); err != nil {
-		log.Println(
-			"invalid url shortening form from",
-			r.RemoteAddr,
-			". error:",
-			err.Error(),
-		)
+		log.Error().Err(err).Msg("invalid shortening form")
 
 		pkg, _ := json.Marshal(&responses.Server{
 			Message: "invalid shortening form",
@@ -273,13 +262,16 @@ func (s *Shortener) shortenNoAuth(w http.ResponseWriter, r *http.Request) {
 		w.Write(pkg)
 		return
 	}
+	log.Info().Msg("got valid shortening form")
 
 	var shortUrl string
 	for {
 		shortUrl = generateShortUrl(5)
 		exists, err := s.urls.CheckExistence(context.TODO(), shortUrl)
 		if err != nil {
-			log.Println("couldn't check existence of short url. error:", err)
+			log.Error().
+				Err(err).
+				Msg("couldn't check existence of short url in database. will reattempt database request")
 			continue
 		}
 		if !exists {
@@ -296,6 +288,7 @@ func (s *Shortener) shortenNoAuth(w http.ResponseWriter, r *http.Request) {
 		ExpirationDate: time.Now().Add(time.Hour * 24 * 30),
 	})
 
+	log.Info().Msg("sending short url to storage service with")
 	s.producer.Input() <- &sarama.ProducerMessage{
 		Topic: s.topic,
 		Value: sarama.ByteEncoder(m),

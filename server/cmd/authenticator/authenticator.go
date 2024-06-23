@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,27 +15,36 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/justinas/alice"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/hlog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	log := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
+		With().
+		Timestamp().
+		Logger()
+
 	conn, err := grpc.NewClient(
 		"blackbox:8080",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		log.Fatalln("couldn't dial blackbox service. error:", err)
+		log.Fatal().Err(err).Msg("couldn't dial blackbox service")
 	}
 	defer conn.Close()
 
-	c := blackbox.NewBlackboxServiceClient(conn)
+	box := blackbox.NewBlackboxServiceClient(conn)
 
 	usersModel, err := users.NewUsers(
 		users.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate users model. error:", err)
+		log.Fatal().Err(err).Msg("couldn't instantiate users model")
 	}
 	defer usersModel.Close()
 
@@ -46,7 +54,7 @@ func main() {
 	conf.Producer.Return.Errors = false
 
 	if err = conf.Validate(); err != nil {
-		log.Fatalln("invalid kafka config:", err)
+		log.Fatal().Err(err).Msg("invalid kafka config")
 	}
 
 	p, err := sarama.NewAsyncProducer(
@@ -54,45 +62,69 @@ func main() {
 		conf,
 	)
 	if err != nil {
-		log.Fatalln("couldn't create kafka producer. error:", err)
+		log.Fatal().Err(err).Msg("couldn't instantiate kafka producer")
 	}
 	defer p.Close()
 
-	authenticator, err := authenticator.New(
+	a, err := authenticator.New(
 		authenticator.WithUsersDB(usersModel),
-		authenticator.WithBlackboxClient(c),
+		authenticator.WithBlackboxClient(box),
 		authenticator.WithProducer(os.Getenv("KAFKA_USERS_TOPIC"), p),
 	)
 	if err != nil {
-		log.Fatalln("couldn't create authenticator. error:", err)
+		log.Fatal().Err(err).Msg("couldn't instantiate authenticator")
 	}
 
+	stdMiddleware := alice.New()
+	stdMiddleware = stdMiddleware.Append(
+		hlog.NewHandler(log),
+		hlog.AccessHandler(
+			func(r *http.Request, status, size int, duration time.Duration) {
+				hlog.FromRequest(r).Info().Str("method", r.Method).
+					Int("status", status).
+					Dur("duration", duration).
+					Msg("")
+			},
+		),
+		hlog.RemoteAddrHandler("ip"),
+		hlog.URLHandler("url"),
+		hlog.RequestHandler("url_and_method"),
+		hlog.RequestIDHandler("request_id", "Request-Id"),
+		hlog.UserAgentHandler("user_agent"),
+	)
+
 	mux := http.NewServeMux()
-	mux.HandleFunc(
+	mux.Handle(
 		"OPTIONS /signup",
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stdMiddleware.ThenFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().
 				Add("Access-Control-Allow-Origin", "http://localhost:8001")
 			w.Header().Add("Access-Control-Allow-Credentials", "true")
 			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
 		}),
 	)
-	mux.HandleFunc(
+	mux.Handle(
 		"OPTIONS /login",
-		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().
-				Add("Access-Control-Allow-Origin", "http://localhost:8001")
-			w.Header().Add("Access-Control-Allow-Credentials", "true")
-			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
-		}),
+		stdMiddleware.ThenFunc(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().
+					Add("Access-Control-Allow-Origin", "http://localhost:8001")
+				w.Header().Add("Access-Control-Allow-Credentials", "true")
+				w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
+			}),
+		),
 	)
-	mux.HandleFunc(
+	mux.Handle(
 		"POST /signup",
-		middleware.CorsHeaders(http.HandlerFunc(authenticator.Register)),
+		stdMiddleware.
+			Append(middleware.CorsHeaders).
+			ThenFunc(a.Register),
 	)
-	mux.HandleFunc(
+	mux.Handle(
 		"POST /login",
-		middleware.CorsHeaders(http.HandlerFunc(authenticator.Login)),
+		stdMiddleware.
+			Append(middleware.CorsHeaders).
+			ThenFunc(a.Login),
 	)
 
 	server := http.Server{
@@ -114,12 +146,12 @@ func main() {
 		<-ctx.Done()
 		err = server.Shutdown(context.TODO())
 		if err != nil {
-			log.Printf("error occured on Shutdown():%v\n", err)
+			log.Error().Err(err).Msg("error occured on Shutdown()")
 		}
 	}()
 
 	err = server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatalf("error during shutdown:%v\n", err)
+		log.Fatal().Err(err).Msg("error during shutdown")
 	}
 }

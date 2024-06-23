@@ -7,12 +7,15 @@ import (
 	"shortener/proto/blackbox"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/rs/zerolog"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
 type BlackboxServiceImpl struct {
 	blackbox.UnimplementedBlackboxServiceServer
+
+	logger *zerolog.Logger
 	secret string
 }
 

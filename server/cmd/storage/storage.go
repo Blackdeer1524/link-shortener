@@ -67,7 +67,7 @@ func main() {
 		storage.WithUsersModel(users),
 	)
 	if err != nil {
-		log.Fatalln("couldn't create consumer group's handler. error:", err)
+		log.Fatalln("couldn't instantiate consumer group's handler. error:", err)
 	}
 
 	go func() {

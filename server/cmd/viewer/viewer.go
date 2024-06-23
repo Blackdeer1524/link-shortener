@@ -38,7 +38,7 @@ func main() {
 		urls.WithRedis(rdb),
 	)
 	if err != nil {
-		log.Fatalln("couldn't create urls model. error:", err)
+		log.Fatalln("couldn't instantiate urls model. error:", err)
 	}
 
 	v, err := viewer.New(
@@ -47,7 +47,7 @@ func main() {
 		viewer.WithRedirectorHost(os.Getenv("REDIRECTOR_HOST")),
 	)
 	if err != nil {
-		log.Fatalln("couldn't create urls model. error:", err)
+		log.Fatalln("couldn't instantiate urls model. error:", err)
 	}
 
 	mux := http.NewServeMux()
@@ -59,7 +59,7 @@ func main() {
 			w.Header().Add("Access-Control-Allow-Credentials", "true")
 		}),
 	)
-	mux.HandleFunc(
+	mux.Handle(
 		"GET /history",
 		middleware.CorsHeaders(http.HandlerFunc(v.HandleHistory)),
 	)

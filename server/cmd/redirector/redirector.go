@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -12,26 +11,51 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/justinas/alice"
 	"github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/hlog"
 )
 
 func main() {
-	rdb := redis.NewClient(&redis.Options{Addr: "redis:6379"})
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+	log := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).
+		With().
+		Timestamp().
+		Logger()
 
+	rdb := redis.NewClient(&redis.Options{Addr: "redis:6379"})
 	u, err := urls.New(
 		urls.WithRedis(rdb),
 		urls.WithPool(context.TODO(), os.Getenv("POSTGRES_DSN")),
 	)
 	if err != nil {
-		log.Fatalln("couldn't instantiate urls model. error:", err)
+		log.Fatal().Err(err).Msg("couldn't instantiate urls model")
 	}
 	defer u.Close()
 
 	re, err := redirector.New(redirector.WithUrlsModel(u))
+	if err != nil {
+		log.Fatal().Err(err).Msg("couldn't instantiate redirector")
+	}
+
+	c := alice.New(
+		hlog.NewHandler(log),
+		hlog.URLHandler("url"),
+		hlog.RequestIDHandler("request_id", "Request-Id"),
+		hlog.RemoteAddrHandler("ip"),
+		hlog.AccessHandler(
+			func(r *http.Request, status, size int, duration time.Duration) {
+				hlog.FromRequest(r).Info().
+					Int("status", status).
+					Dur("duration", duration).
+					Msg("")
+			},
+		),
+	)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", re.Redirect)
-
+	mux.Handle("GET /", c.ThenFunc(re.Redirect))
 	server := http.Server{
 		Addr:         ":8080",
 		Handler:      mux,
@@ -51,12 +75,12 @@ func main() {
 		<-ctx.Done()
 		err = server.Shutdown(context.TODO())
 		if err != nil {
-			log.Printf("error occured on Shutdown():%v\n", err)
+			log.Error().Err(err).Msg("error occured on Shutdown()")
 		}
 	}()
 
 	err = server.ListenAndServe()
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatalf("error during shutdown:%v\n", err)
+		log.Fatal().Err(err).Msg("error during shutdown")
 	}
 }

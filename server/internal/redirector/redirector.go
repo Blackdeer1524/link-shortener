@@ -3,10 +3,11 @@ package redirector
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"shortener/pkg/models/urls"
 	"strings"
+
+	"github.com/rs/zerolog/hlog"
 )
 
 type Urls interface {
@@ -40,25 +41,25 @@ func New(opts ...redirectorOption) (*Redirector, error) {
 }
 
 func (re *Redirector) Redirect(w http.ResponseWriter, r *http.Request) {
+	log := hlog.FromRequest(r)
+
 	shortUrl := strings.TrimLeft(r.URL.Path, "/")
-	log.Printf("got redirect request from %s: %s\n", r.RemoteAddr, shortUrl)
 	if len(shortUrl) != 5 {
 		http.NotFound(w, r)
 		return
 	}
 
+	log.Info().Msg("trying to get long url from the short one")
 	longUrl, err := re.urls.GetLongUrl(context.TODO(), shortUrl)
 	if err == nil {
-		w.Header().Add("Cache-Control", "no-cache")
 		http.Redirect(w, r, longUrl, http.StatusMovedPermanently)
 		return
 	}
 	if !errors.Is(err, urls.ErrNotFound) {
-		log.Printf(
-			"couldn't get long url for %s from db. error: %v",
-			shortUrl,
-			err,
-		)
+		log.Error().Err(err).Msg("couldn't get long url")
+		http.NotFound(w, r)
+	} else {
+		log.Info().Err(err).Msg("long url not found in database")
+		http.NotFound(w, r)
 	}
-	http.NotFound(w, r)
 }

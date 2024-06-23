@@ -15,7 +15,7 @@ import (
 )
 
 func main() {
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.ChainUnaryInterceptor())
 
 	lis, err := net.Listen("tcp", ":8080")
 	if err != nil {

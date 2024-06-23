@@ -54,13 +54,12 @@ func main() {
 		conf,
 	)
 	if err != nil {
-		log.Fatalln("couldn't create kafka producer. error:", err)
+		log.Fatalln("couldn't instantiate kafka producer. error:", err)
 	}
 	defer p.Close()
 
 	s, err := shortener.New(
 		shortener.WithBlackboxClient(blackbox.NewBlackboxServiceClient(conn)),
-		shortener.WithUrlsModel(u),
 		shortener.WithKafkaProducer(p, os.Getenv("KAFKA_URLS_TOPIC")),
 		shortener.WithRedirectorHost(os.Getenv("REDIRECTOR_HOST")),
 	)
@@ -78,7 +77,7 @@ func main() {
 			w.Header().Add("Access-Control-Allow-Headers", "Content-Type")
 		}),
 	)
-	mux.HandleFunc(
+	mux.Handle(
 		"POST /create_short_url",
 		middleware.CorsHeaders(http.HandlerFunc(s.ShortenUrl)),
 	)

@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"shortener/pkg/models/users"
 	"shortener/pkg/responses"
 
 	"github.com/IBM/sarama"
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/hlog"
 	"golang.org/x/crypto/bcrypt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,8 +31,8 @@ type Users interface {
 }
 
 type Authentitor struct {
-	users Users
-
+	logger         *zerolog.Logger
+	users          Users
 	blackboxClient pbblackbox.BlackboxServiceClient
 
 	topic    string
@@ -94,17 +95,13 @@ func New(opts ...authenticatorOption) (*Authentitor, error) {
 const hashCost = 12
 
 func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
-	log.Println("got new registration request from", r.RemoteAddr)
+	log := hlog.FromRequest(r)
 
+	log.Info().Msg("decoding request body")
 	d := json.NewDecoder(r.Body)
-	var regReq registerRequest
-	if err := d.Decode(&regReq); err != nil {
-		log.Println(
-			"couldn't parse registration request from",
-			r.RemoteAddr,
-			". error:",
-			err.Error(),
-		)
+	var regForm registerRequest
+	if err := d.Decode(&regForm); err != nil {
+		log.Error().Err(err).Msg("couldn't parse registration request from")
 
 		pkg, _ := json.Marshal(&responses.Server{
 			Message: "Couldn't parse registration request",
@@ -115,13 +112,9 @@ func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validate.Struct(&regReq); err != nil {
-		log.Println(
-			"invalid registration form",
-			r.RemoteAddr,
-			". error:",
-			err.Error(),
-		)
+	log.Info().Msg("validating parsed request body")
+	if err := validate.Struct(&regForm); err != nil {
+		log.Error().Err(err).Msg("invalid registration form")
 
 		pkg, _ := json.Marshal(&responses.Server{
 			Message: "invalid registration form from",
@@ -132,15 +125,18 @@ func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tmp := log.With().Str("email", regForm.Email).Logger()
+	log = &tmp
+
+	log.Info().Msg("generating password hash")
 	hashedPwd, err := bcrypt.GenerateFromPassword(
-		[]byte(regReq.Password),
+		[]byte(regForm.Password),
 		hashCost,
 	)
 	if err != nil {
-		log.Printf(
-			"couldn't hash password. error: %v\n",
-			err,
-		)
+		log.Error().
+			Err(err).
+			Msg("couldn't hash password")
 		pkg, _ := json.Marshal(&responses.Server{
 			Message: "couldn't register user",
 		})
@@ -151,21 +147,23 @@ func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userId := uuid.New().String()
-	p, err := json.Marshal(&responses.Authenticator{
+	p, _ := json.Marshal(&responses.Authenticator{
 		Id:             userId,
-		Name:           regReq.Name,
-		Email:          regReq.Email,
+		Name:           regForm.Name,
+		Email:          regForm.Email,
 		HashedPassword: string(hashedPwd),
 	})
-	if err != nil {
-		panic(err)
-	}
 
-	exists, err := a.users.CheckExistence(context.TODO(), regReq.Email)
+	log.Info().
+		Err(err).
+		Msg("checking whether this email has already been taken")
+	exists, err := a.users.CheckExistence(context.TODO(), regForm.Email)
 	if err != nil {
-		log.Printf("couldn't query db. error: %v", err)
+		log.Error().
+			Err(err).
+			Msg("couldn't query database")
 		pkg, _ := json.Marshal(&responses.Server{
-			Message: "couldn't create new user. try again later",
+			Message: "couldn't instantiate new user. try again later",
 		})
 
 		w.WriteHeader(http.StatusInternalServerError)
@@ -174,6 +172,8 @@ func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if exists {
+		log.Info().
+			Msg("user already exists")
 		pkg, _ := json.Marshal(&responses.Server{
 			Message: "user already exists",
 		})
@@ -186,7 +186,9 @@ func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 		Topic: a.topic,
 		Value: sarama.ByteEncoder(p),
 	}
+	log.Info().Msg("sent registration request to Storage service")
 
+	log.Info().Msg("issuing JWT")
 	signedToken, err := a.blackboxClient.IssueToken(
 		context.TODO(),
 		&pbblackbox.IssueTokenReq{
@@ -194,13 +196,8 @@ func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
+		log.Error().Err(err).Msg("couldnt't issue token")
 		s, ok := status.FromError(err)
-		log.Println(
-			"couldnt't sign token for",
-			r.RemoteAddr,
-			". error:",
-			err.Error(),
-		)
 		if !ok {
 			pkg, _ := json.Marshal(&responses.Server{
 				Message: "couldn't issue JWT",
@@ -231,7 +228,9 @@ func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			w.Write(pkg)
 		default:
-			log.Printf("unknown code from grpc: %v", s.Code())
+			log.Error().
+				Uint32("grpc_code", uint32(s.Code())).
+				Msg("unknown code from grpc")
 			pkg, _ := json.Marshal(&responses.Server{
 				Message: "couldn't issue JWT",
 			})
@@ -270,20 +269,17 @@ func (a *Authentitor) Register(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Write(pkg)
+	log.Info().Str("user_id", userId).Msg("wriring response")
 }
 
 func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
-	log.Println("got login request from", r.RemoteAddr)
+	log := hlog.FromRequest(r)
 
+	log.Info().Msg("parsing request body")
 	d := json.NewDecoder(r.Body)
 	var loginForm loginRequest
 	if err := d.Decode(&loginForm); err != nil {
-		log.Println(
-			"couldn't parse login request from",
-			r.RemoteAddr,
-			". error:",
-			err.Error(),
-		)
+		log.Error().Err(err).Msg("couldn't parse login request")
 
 		pkg, _ := json.Marshal(&responses.Server{
 			Message: "Couldn't parse login request",
@@ -294,6 +290,7 @@ func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Info().Msg("validating login form")
 	if err := validate.Struct(&loginForm); err != nil {
 		log.Println(
 			"invalid login form from",
@@ -311,18 +308,16 @@ func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Info().Str("email", loginForm.Email).Msg("trying to authenticate")
 	userId, err := a.users.Authenticate(
 		context.TODO(),
 		loginForm.Email,
 		loginForm.Password,
 	)
 	if err != nil {
-		log.Println(
-			"wrong email or password for login attempt from",
-			r.RemoteAddr,
-			". error:",
-			err.Error(),
-		)
+		log.Error().
+			Err(err).
+			Msg("wrong email or password for login attempt from")
 
 		if errors.Is(err, users.ErrWrongCredentials) {
 			pkg, _ := json.Marshal(&responses.Server{
@@ -342,6 +337,7 @@ func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Info().Msg("Issuing JWT")
 	signedToken, err := a.blackboxClient.IssueToken(
 		context.TODO(),
 		&pbblackbox.IssueTokenReq{
@@ -349,12 +345,7 @@ func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
 		},
 	)
 	if err != nil {
-		log.Println(
-			"couldnt't sign token on login attempt for",
-			r.RemoteAddr,
-			". error:",
-			err.Error(),
-		)
+		log.Error().Err(err).Msg("couldn't sign token on login attempt for")
 		pkg, _ := json.Marshal(&responses.Server{
 			Message: "couldn't issue user token",
 		})
@@ -393,8 +384,5 @@ func (a *Authentitor) Login(w http.ResponseWriter, r *http.Request) {
 
 	w.Write(pkg)
 
-	log.Println(
-		"successful login from",
-		r.RemoteAddr,
-	)
+	log.Info().Msg("successful login")
 }
