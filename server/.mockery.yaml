@@ -22,3 +22,16 @@ packages:
     interfaces:
       Urls:
 
+  shortener/internal/storage: 
+    config:
+      dir: "{{.InterfaceDir}}"
+    interfaces:
+      Urls:
+      Users:
+
+  shortener/internal/viewer: 
+    config:
+      dir: "{{.InterfaceDir}}"
+    interfaces:
+      Urls:
+
