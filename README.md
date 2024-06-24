@@ -1,3 +1,5 @@
+![](./images/demo.gif)
+
 <!--toc:start-->
 - [Запуск](#запуск)
   - [Тесты](#тесты)
@@ -30,9 +32,6 @@
       - [Status codes](#status-codes)
 <!--toc:end-->
 
-# Демо
-
-![](./images/demo.gif)
 
 # Запуск
 
