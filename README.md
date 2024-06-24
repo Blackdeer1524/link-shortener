@@ -1,4 +1,6 @@
 <!--toc:start-->
+- [Запуск](#запуск)
+  - [Тесты](#тесты)
 - [Об архитектуре](#об-архитектуре)
   - [Требования к системе](#требования-к-системе)
   - [Сервисы](#сервисы)
@@ -27,6 +29,29 @@
       - [Response format](#response-format)
       - [Status codes](#status-codes)
 <!--toc:end-->
+
+# Демо
+
+![](./images/demo.gif)
+
+# Запуск
+
+```sh
+docker compose up --build
+```
+
+Сайт располагается на `http://localhost:8001`
+
+## Тесты
+
+Для тестов используется [mockery](https://github.com/vektra/mockery). 
+
+Запуск тестов:
+```sh
+cd ./server
+make test
+```
+
 
 # Об архитектуре
 

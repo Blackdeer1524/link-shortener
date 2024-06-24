@@ -124,7 +124,7 @@ function App() {
           <input
             type="url"
             id="long-url-input"
-            className="w-full rounded p-1 text-xl"
+            className="w-full rounded p-1 text-3xl"
             placeholder="Url to shorten"
             onChange={(e) => {
               setLongURL(e.target.value);

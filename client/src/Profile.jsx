@@ -39,18 +39,20 @@ export default function Profile() {
       />
       <div className="flex h-full w-full items-center justify-center overflow-auto">
         <div className="flex w-fit flex-col items-center justify-around bg-[#6B6F80] p-10">
-          <table>
+          <table className="border-collapse border border-solid bg-white">
             <tr>
-              <th>Short URL</th>
-              <th>Long URL</th>
-              <th>Expiration Date</th>
+              <th className="border border-solid">Short URL</th>
+              <th className="border border-solid">Long URL</th>
+              <th className="border border-solid">Expiration Date</th>
             </tr>
             {history.map((row) => {
               return (
                 <tr key={row["short_url"]}>
-                  <td>{row["short_url"]}</td>
-                  <td>{row["long_url"]}</td>
-                  <td>{row["expiration_date"]}</td>
+                  <td className="border border-solid pl-2 pr-2">{row["short_url"]}</td>
+                  <td className="border border-solid pl-2 pr-2">{row["long_url"]}</td>
+                  <td className="border border-solid pl-2 pr-2">
+                    {row["expiration_date"]}
+                  </td>
                 </tr>
               );
             })}

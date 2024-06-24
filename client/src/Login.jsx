@@ -51,19 +51,19 @@ export default function SignUp() {
             {errorMessage}
           </p>
           <input
-            className="w-full rounded-xl p-2 text-center text-5xl"
+            className="w-full rounded-xl p-2 text-center text-3xl"
             placeholder="Email"
             onChange={(e) => setEmail(e.target.value)}
           />
           <input
-            className="w-full rounded-xl p-2 text-center text-5xl"
+            className="w-full rounded-xl p-2 text-center text-3xl"
             placeholder="Password"
             type="password"
             onChange={(e) => setPassword(e.target.value)}
           />
 
           <button
-            className="rounded-xl bg-white p-2 text-5xl"
+            className="rounded-xl bg-white p-2 text-3xl"
             onClick={() => handleSubmit()}
             disabled={waitingResponse}
           >

@@ -84,27 +84,27 @@ export default function SignUp() {
       <DefaultNavigation />
       <div className="flex h-full w-full items-center justify-center">
         <div className="flex w-[60%] flex-col items-center justify-around gap-10 bg-[#6B6F80] p-10">
-          <p className="text-red-500 text-3xl font-bold whitespace-pre-wrap">
+          <p className="text-red-500 text-xl font-bold whitespace-pre-wrap">
             {errorMessage}
           </p>
           <input
-            className="w-full rounded-xl p-2 text-center text-5xl"
+            className="w-full rounded-xl p-2 text-center text-3xl"
             placeholder="Name"
             onChange={(e) => setName(e.target.value)}
           />
           <input
-            className="w-full rounded-xl p-2 text-center text-5xl"
+            className="w-full rounded-xl p-2 text-center text-3xl"
             placeholder="Email"
             onChange={(e) => setEmail(e.target.value)}
           />
           <input
-            className="w-full rounded-xl p-2 text-center text-5xl"
+            className="w-full rounded-xl p-2 text-center text-3xl"
             placeholder="Password"
             type="password"
             onChange={(e) => setPassword(e.target.value)}
           />
           <input
-            className="w-full rounded-xl p-2 text-center text-5xl"
+            className="w-full rounded-xl p-2 text-center text-3xl"
             placeholder="Confirm password"
             type="password"
             onChange={(e) => setConfirmPassword(e.target.value)}
